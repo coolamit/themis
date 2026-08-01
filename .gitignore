@@ -1,14 +1,24 @@
 *.exe
 *.exe~
 *.dll
+*.dmg
+*.pkg
 *.so
 *.dylib
 *.test
+
+/themis*
+/cmd/themis-publish/themis*
+/bin/
+/dist/
 
 *.out
 coverage.*
 *.coverprofile
 profile.cov
+
+result.json
+findings*.json
 
 vendor/
 go.work
@@ -17,6 +27,8 @@ go.work.sum
 
 .idea/
 .vscode/
+.DS_Store
+Thumbs.db
 
 **/.scratchpad/
 CLAUDE.local.md
