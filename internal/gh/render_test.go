@@ -1,0 +1,204 @@
+package gh
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/coolamit/themis/internal/ocr"
+)
+
+var guardComment = ocr.Comment{
+	Path:           "index.php",
+	Content:        "The array key may be missing.",
+	SuggestionCode: "$code = $_GET['code'] ?? null;",
+	ExistingCode:   "$code = $_GET['code'];",
+	StartLine:      3,
+	EndLine:        3,
+	Category:       "bug",
+	Severity:       "high",
+}
+
+// headFile has guardComment's flagged code on line 3.
+const headFile = "<?php\n\n$code = $_GET['code'];\n\nif ( 1 > $code ) {\n\techo 'Code is greater';\n} else {\n\techo 'Code is less';\n}\n"
+
+func lookupHead(path string) (string, error) { return headFile, nil }
+
+func TestRenderCommentWithSuggestion(t *testing.T) {
+	body := RenderComment(guardComment, lookupHead)
+	if !strings.HasPrefix(body, "🟠 **high · bug**\n\n") {
+		t.Errorf("header wrong: %q", body)
+	}
+	if !strings.Contains(body, "\n\n```suggestion\n$code = $_GET['code'] ?? null;\n```") {
+		t.Errorf("suggestion block missing or malformed: %q", body)
+	}
+	marker := "<!-- themis-fp:" + guardComment.Fingerprint() + " -->"
+	if !strings.HasSuffix(body, marker) {
+		t.Errorf("body does not end with fp marker %q: %q", marker, body)
+	}
+}
+
+func TestRenderCommentSuggestionSurvivesWhitespaceChurn(t *testing.T) {
+	c := guardComment
+	c.ExistingCode = "  $code   = $_GET['code'];\t"
+	body := RenderComment(c, lookupHead)
+	if !strings.Contains(body, "```suggestion") {
+		t.Error("whitespace-only difference dropped the suggestion block")
+	}
+}
+
+func TestRenderCommentSuggestionDroppedOnMismatch(t *testing.T) {
+	c := guardComment
+	c.ExistingCode = "$code = $_GET['token'];" // no longer what line 3 says
+	body := RenderComment(c, lookupHead)
+	if strings.Contains(body, "```suggestion") {
+		t.Error("stale existing_code kept the suggestion block")
+	}
+	if !strings.Contains(body, c.Content) {
+		t.Error("comment content lost when suggestion dropped")
+	}
+	if !strings.Contains(body, "themis-fp:") {
+		t.Error("fp marker lost when suggestion dropped")
+	}
+}
+
+func TestRenderCommentSuggestionGuardEdgeCases(t *testing.T) {
+	noSuggestion := guardComment
+	noSuggestion.SuggestionCode = ""
+	if strings.Contains(RenderComment(noSuggestion, lookupHead), "```suggestion") {
+		t.Error("suggestion block rendered without suggestion_code")
+	}
+
+	noExisting := guardComment
+	noExisting.ExistingCode = ""
+	if strings.Contains(RenderComment(noExisting, lookupHead), "```suggestion") {
+		t.Error("suggestion block rendered without existing_code")
+	}
+
+	if strings.Contains(RenderComment(guardComment, nil), "```suggestion") {
+		t.Error("suggestion block rendered without a content lookup")
+	}
+
+	failing := func(path string) (string, error) { return "", errors.New("no such object") }
+	if strings.Contains(RenderComment(guardComment, failing), "```suggestion") {
+		t.Error("suggestion block rendered despite lookup failure")
+	}
+
+	outOfRange := guardComment
+	outOfRange.StartLine = 500
+	outOfRange.EndLine = 500
+	if strings.Contains(RenderComment(outOfRange, lookupHead), "```suggestion") {
+		t.Error("suggestion block rendered for lines beyond EOF")
+	}
+}
+
+func TestRenderCommentMultiLineGuard(t *testing.T) {
+	c := ocr.Comment{
+		Path:           "index.php",
+		Content:        "Inverted comparison.",
+		SuggestionCode: "if ($code > 1) {\n\techo 'Code is greater';\n}",
+		ExistingCode:   "if ( 1 > $code ) {\n\techo 'Code is greater';\n} else {\n\techo 'Code is less';\n}",
+		StartLine:      5,
+		EndLine:        9,
+		Category:       "bug",
+		Severity:       "high",
+	}
+	if !strings.Contains(RenderComment(c, lookupHead), "```suggestion") {
+		t.Error("multi-line existing_code matching lines 5-9 did not keep the suggestion")
+	}
+}
+
+func TestRenderCommentHeaderVariants(t *testing.T) {
+	cases := []struct {
+		severity, category, want string
+	}{
+		{"critical", "bug", "🔴 **critical · bug**"},
+		{"high", "security", "🟠 **high · security**"},
+		{"medium", "", "🟡 **medium**"},
+		{"low", "style", "🔵 **low · style**"},
+		{"", "bug", "⚪ **unspecified · bug**"},
+		{"", "", "⚪ **unspecified**"},
+	}
+	for _, tc := range cases {
+		c := ocr.Comment{Path: "a.go", Content: "x", StartLine: 1, EndLine: 1, Severity: tc.severity, Category: tc.category}
+		body := RenderComment(c, nil)
+		if !strings.HasPrefix(body, tc.want+"\n\n") {
+			t.Errorf("severity=%q category=%q: got %q, want prefix %q", tc.severity, tc.category, body, tc.want)
+		}
+	}
+}
+
+func TestDiffAnchor(t *testing.T) {
+	sum := sha256.Sum256([]byte("src/api.php"))
+	want := "#diff-" + hex.EncodeToString(sum[:]) + "R42"
+	if got := DiffAnchor("src/api.php", 42); got != want {
+		t.Errorf("DiffAnchor = %q, want %q", got, want)
+	}
+}
+
+func TestRenderOverflowEntry(t *testing.T) {
+	c := ocr.Comment{
+		Path:      "src/api.php",
+		Content:   "First sentence. Second sentence. Third sentence should be cut.",
+		StartLine: 42,
+		EndLine:   48,
+		Severity:  "high",
+	}
+	entry := RenderOverflowEntry(c, "https://github.com/o/r/pull/7/files")
+	if !strings.HasPrefix(entry, "- 🟠 [**`src/api.php` L42–48**](https://github.com/o/r/pull/7/files#diff-") {
+		t.Errorf("entry = %q", entry)
+	}
+	if !strings.Contains(entry, "R42)") {
+		t.Errorf("entry link does not anchor to start line: %q", entry)
+	}
+	if !strings.Contains(entry, "First sentence. Second sentence.…") {
+		t.Errorf("content not truncated to two sentences: %q", entry)
+	}
+	if !strings.Contains(entry, "themis-fp:"+c.Fingerprint()) {
+		t.Errorf("entry missing fp marker: %q", entry)
+	}
+
+	single := c
+	single.EndLine = 42
+	if !strings.Contains(RenderOverflowEntry(single, ""), "L42**") {
+		t.Errorf("single-line entry should say L42: %q", RenderOverflowEntry(single, ""))
+	}
+}
+
+func TestRenderOverflowSummary(t *testing.T) {
+	if got := RenderOverflowSummary(nil, ""); got != "" {
+		t.Errorf("empty overflow should render nothing, got %q", got)
+	}
+	comments := []ocr.Comment{
+		{Path: "a.go", Content: "One.", StartLine: 1, EndLine: 1, Severity: "high"},
+		{Path: "b.go", Content: "Two.", StartLine: 2, EndLine: 2, Severity: "low"},
+	}
+	summary := RenderOverflowSummary(comments, "https://github.com/o/r/pull/7/files")
+	if strings.Count(summary, "\n- ")+1 < 2 && strings.Count(summary, "- ") < 2 {
+		t.Errorf("summary missing entries: %q", summary)
+	}
+	for _, c := range comments {
+		if !strings.Contains(summary, "themis-fp:"+c.Fingerprint()) {
+			t.Errorf("summary missing marker for %s", c.Path)
+		}
+	}
+}
+
+func TestTruncateContent(t *testing.T) {
+	if got := truncateContent("Short text without sentence end"); got != "Short text without sentence end" {
+		t.Errorf("short text altered: %q", got)
+	}
+	if got := truncateContent("One. Two. Three."); got != "One. Two.…" {
+		t.Errorf("sentence truncation = %q", got)
+	}
+	long := strings.Repeat("word ", 100) // 500 runes, no sentence ends
+	got := truncateContent(long)
+	if len([]rune(got)) > 301 { // 300 + ellipsis
+		t.Errorf("long text not capped: %d runes", len([]rune(got)))
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("capped text missing ellipsis: %q", got)
+	}
+}
