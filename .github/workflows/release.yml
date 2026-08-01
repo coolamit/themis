@@ -1,0 +1,84 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Tag events carry no branch information; ancestry of master is
+      # the enforcement that only reviewed commits get released.
+      - name: Ensure the tagged commit is on master
+        run: |
+          git fetch origin master
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+            echo "::error::tag ${GITHUB_REF_NAME} points to a commit that is not on master; refusing to release"
+            exit 1
+          fi
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Check formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "gofmt required on:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Shellcheck
+        run: shellcheck scripts/*.sh scripts/tests/check-action-consistency.sh
+
+      - name: Install bats
+        run: sudo apt-get update && sudo apt-get install -y bats
+
+      - name: Script tests
+        run: bats scripts/tests/
+
+      - name: Action consistency
+        run: ./scripts/tests/check-action-consistency.sh action.yml
+
+      - name: Build release binary
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -trimpath -ldflags='-s -w' -o dist/themis-publish-linux-amd64 ./cmd/themis-publish
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum themis-publish-linux-amd64 > checksums.txt
+          cat checksums.txt
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/themis-publish-linux-amd64 dist/checksums.txt \
+            --title "$GITHUB_REF_NAME" --generate-notes
+
+      # Keep the moving latest tag on the newest release so that
+      # `uses: coolamit/themis@latest` always resolves to it.
+      - name: Update the latest tag
+        run: |
+          git tag -f latest "$GITHUB_SHA"
+          git push -f origin latest

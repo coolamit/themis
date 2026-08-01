@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Check formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "gofmt required on:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build static binary
+        run: CGO_ENABLED=0 go build ./...
+
+      - name: Shellcheck
+        run: shellcheck scripts/*.sh scripts/tests/check-action-consistency.sh
+
+      - name: Install bats
+        run: sudo apt-get update && sudo apt-get install -y bats
+
+      - name: Script tests
+        run: bats scripts/tests/
+
+      - name: Install actionlint
+        run: bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+
+      - name: Lint workflows and example
+        run: ./actionlint .github/workflows/*.yml examples/themis.yml
+
+      - name: Action consistency
+        run: ./scripts/tests/check-action-consistency.sh action.yml
