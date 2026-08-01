@@ -1,0 +1,5 @@
+# SHA-256 checksums for the opencodereview-linux-amd64 release asset,
+# one "<version> <sha256>" pair per line. install-ocr.sh verifies a
+# pinned ocr-version against this list; versions not listed install
+# with a warning instead of failing.
+1.8.4 83a440dda3bae929888cb15e3dddad7c9cc6617af4ca10a7424c89370e7d7e64
