@@ -205,9 +205,30 @@ Findings are posted as inline review comments, prefixed by severity: 🔴 critic
 
 Per run, at most `max-comments` (default 25) findings go inline, filled in severity order. Critical findings are exempt from that budget: they always go inline, up to `max-critical-comments` (default 50). Everything that doesn't fit — plus any comment GitHub rejects because its line isn't in the diff — lands in **one overflow summary comment** with links into the diff. Nothing is ever dropped. If a run produces no new findings, Themis posts nothing at all.
 
+## Ignoring files — `.themisignore`
+
+Add a `.themisignore` file at the repository root to exclude files and directories from review. It supports full `.gitignore` pattern syntax — the matching is done by git itself, so wildcards (`*.min.js` matches at any depth), directory patterns (`vendor/`), root anchoring (`/build/`), `**`, `!` negation, and `#` comments all behave exactly as they do in a `.gitignore`:
+
+```gitignore
+# generated and vendored code
+vendor/
+dist/
+*.min.js
+# but do review our own bundler config
+!dist/bundler.config.js
+```
+
+Details worth knowing:
+
+- **The PR head's version governs.** Changes to `.themisignore` apply immediately, including in the PR that introduces or edits it. The file is read from git objects only — the PR head is never checked out.
+- **Two things fail the run loudly:** a bare `*`-style entry, and any combination of entries that covers every file in the repository. Excluding everything is not a configuration Themis accepts.
+- **A PR touching only ignored paths skips cleanly.** When every changed file is ignored, the run ends green with a job-summary notice instead of invoking OCR — no LLM cost, no red ✗.
+- **Security note for `fail-on-severity` users:** because the head governs, a PR author can add `.themisignore` entries for specific files they also modify, taking those files out of review and out of the gate. Watch `.themisignore` changes in PRs the same way you'd watch workflow changes.
+- The `exclude` input still works and composes with `.themisignore` (both apply). Note they speak different dialects: `exclude` passes patterns straight to OCR's glob matcher, while `.themisignore` gets true gitignore semantics.
+
 ## Deduplication — no spam on every push
 
-Themis reviews the full diff on every push, but it won't repost findings it has already made. Each comment carries an invisible fingerprint of *what the finding is about* — the file, the flagged code (whitespace-normalized), and the category — rather than line numbers or the LLM's wording. So a finding stays recognized when later pushes shift its line number, when the LLM rewords the same complaint, or when indentation churns; it re-posts only when the flagged code itself actually changed. Comments whose code was fixed are collapsed as "outdated" by GitHub's built-in behavior.
+Themis reviews the full PR range (merge-base to head) on every push — deliberately, not just the latest changeset. A later push can make earlier code buggy without touching it again (a changed function contract, a removed guard), so the whole PR is re-examined in the context of its newest state; a delta-only review would never look back. The token cost of re-reviewing is capped by `max-tokens-budget`, and the noise cost is eliminated by dedupe: Themis won't repost findings it has already made. Each comment carries an invisible fingerprint of *what the finding is about* — the file, the flagged code (whitespace-normalized), and the category — rather than line numbers or the LLM's wording. So a finding stays recognized when later pushes shift its line number, when the LLM rewords the same complaint, or when indentation churns; it re-posts only when the flagged code itself actually changed. Comments whose code was fixed are collapsed as "outdated" by GitHub's built-in behavior.
 
 ## Security
 

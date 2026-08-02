@@ -153,15 +153,28 @@ runs:
         ACTOR: ${{ github.actor }}
       run: '"$GITHUB_ACTION_PATH/scripts/preflight.sh"'
 
-    - name: Install OCR
+    # Reads the PR head's .themisignore (gitignore-style patterns) and
+    # resolves which changed files to exclude from review. Sets
+    # skip=true when every changed file is ignored — the run then ends
+    # green without invoking OCR.
+    - name: Apply .themisignore
+      id: themisignore
       if: steps.preflight.outputs.skip == 'false'
+      shell: bash
+      env:
+        MERGE_BASE: ${{ steps.refs.outputs.merge-base }}
+        HEAD_SHA: ${{ steps.refs.outputs.head-sha }}
+      run: '"$GITHUB_ACTION_PATH/scripts/themis-ignore.sh"'
+
+    - name: Install OCR
+      if: steps.preflight.outputs.skip == 'false' && steps.themisignore.outputs.skip != 'true'
       shell: bash
       env:
         OCR_VERSION: ${{ inputs.ocr-version }}
       run: '"$GITHUB_ACTION_PATH/scripts/install-ocr.sh"'
 
     - name: Install themis-publish
-      if: steps.preflight.outputs.skip == 'false'
+      if: steps.preflight.outputs.skip == 'false' && steps.themisignore.outputs.skip != 'true'
       shell: bash
       env:
         ACTION_REF: ${{ github.action_ref }}
@@ -202,7 +215,7 @@ runs:
         echo "$dir" >> "$GITHUB_PATH"
 
     - name: Configure OCR
-      if: steps.preflight.outputs.skip == 'false'
+      if: steps.preflight.outputs.skip == 'false' && steps.themisignore.outputs.skip != 'true'
       shell: bash
       env:
         LANGUAGE: ${{ inputs.language }}
@@ -239,7 +252,7 @@ runs:
         } >> "$GITHUB_ENV"
 
     - name: Test LLM connectivity
-      if: steps.preflight.outputs.skip == 'false'
+      if: steps.preflight.outputs.skip == 'false' && steps.themisignore.outputs.skip != 'true'
       shell: bash
       env:
         OCR_LLM_TOKEN: ${{ inputs.llm-api-key }}
@@ -251,7 +264,7 @@ runs:
         fi
 
     - name: Run review
-      if: steps.preflight.outputs.skip == 'false'
+      if: steps.preflight.outputs.skip == 'false' && steps.themisignore.outputs.skip != 'true'
       shell: bash
       env:
         OCR_LLM_TOKEN: ${{ inputs.llm-api-key }}
@@ -260,6 +273,7 @@ runs:
         CONCURRENCY: ${{ inputs.review-concurrency }}
         RULE: ${{ inputs.rule }}
         EXCLUDE: ${{ inputs.exclude }}
+        IGNORE_EXCLUDE: ${{ steps.themisignore.outputs.exclude }}
         BACKGROUND: ${{ inputs.background }}
         MAX_TOKENS_BUDGET: ${{ inputs.max-tokens-budget }}
       run: |
@@ -267,7 +281,12 @@ runs:
         args=(review --from "$MERGE_BASE" --to "$HEAD_SHA" --format json --audience agent)
         if [ -n "$CONCURRENCY" ]; then args+=(--concurrency "$CONCURRENCY"); fi
         if [ -n "$RULE" ]; then args+=(--rule "$RULE"); fi
-        if [ -n "$EXCLUDE" ]; then args+=(--exclude "$EXCLUDE"); fi
+        # One merged --exclude value: OCR keeps only the last occurrence
+        # of the flag, so the input patterns and the .themisignore paths
+        # must ride together.
+        combined="$EXCLUDE"
+        if [ -n "$IGNORE_EXCLUDE" ]; then combined="${combined:+${combined},}${IGNORE_EXCLUDE}"; fi
+        if [ -n "$combined" ]; then args+=(--exclude "$combined"); fi
         if [ -n "$BACKGROUND" ]; then args+=(--background "$BACKGROUND"); fi
         if [ -n "$MAX_TOKENS_BUDGET" ]; then args+=(--max-tokens-budget "$MAX_TOKENS_BUDGET"); fi
         if ! ocr "${args[@]}" > "$RUNNER_TEMP/themis-result.json" 2> "$RUNNER_TEMP/themis-ocr.log"; then
@@ -277,7 +296,7 @@ runs:
         fi
 
     - name: Publish findings
-      if: steps.preflight.outputs.skip == 'false'
+      if: steps.preflight.outputs.skip == 'false' && steps.themisignore.outputs.skip != 'true'
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
