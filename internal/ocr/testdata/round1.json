@@ -1,0 +1,44 @@
+{
+  "status": "success",
+  "summary": {
+    "files_reviewed": 3,
+    "comments": 2,
+    "total_tokens": 46157,
+    "input_tokens": 41378,
+    "output_tokens": 4779,
+    "cache_read_tokens": 29117,
+    "elapsed": "53s"
+  },
+  "tool_calls": {
+    "total": 7,
+    "by_tool": {
+      "code_comment": 1,
+      "code_search": 1,
+      "file_read": 3,
+      "file_read_diff": 2
+    }
+  },
+  "comments": [
+    {
+      "path": "index.php",
+      "content": "`$_GET['code']` is accessed without verifying that the key exists. If the `code` query parameter is omitted, PHP will raise an `Undefined array key` warning (or error in strict mode). Use `isset($_GET['code'])` or filter the input first, e.g. with `filter_input(INPUT_GET, 'code')`.",
+      "suggestion_code": "$code = $_GET['code'] ?? null;\n\nif ($code === null) {\n    echo 'Code parameter is required';\n    return;\n}",
+      "existing_code": "$code = $_GET['code'];",
+      "start_line": 3,
+      "end_line": 3,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": "index.php",
+      "content": "The comparison `1 > $code` is a loose comparison between an integer and a string from `$_GET`. When `$code` is a non-numeric string (e.g. \"abc\"), PHP coerces it to `0` (in PHP 8+, a `TypeError` may be triggered for non-numeric strings in comparisons). Additionally, the output messages are logically inverted: when `$code` is less than 1, it prints 'Code is greater', and when `$code` is greater than or equal to 1, it prints 'Code is less'. This is likely a logic error. Use strict comparison with proper numeric validation.",
+      "suggestion_code": "$code = $_GET['code'] ?? null;\n\nif (!is_numeric($code)) {\n    echo 'Invalid code';\n    return;\n}\n\n$code = (float)$code;\n\nif ($code > 1) {\n    echo 'Code is greater';\n} else {\n    echo 'Code is less';\n}",
+      "existing_code": "if ( 1 > $code ) {\n\techo 'Code is greater';\n} else {\n\techo 'Code is less';\n}",
+      "start_line": 5,
+      "end_line": 9,
+      "category": "bug",
+      "severity": "high"
+    }
+  ],
+  "session_id": "2139a98e-1963-46f7-b252-f0d2ebbc1f7b"
+}

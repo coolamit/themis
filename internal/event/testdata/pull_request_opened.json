@@ -1,0 +1,18 @@
+{
+  "action": "opened",
+  "number": 7,
+  "pull_request": {
+    "number": 7,
+    "base": {
+      "ref": "master",
+      "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "repo": {"full_name": "coolamit/themis"}
+    },
+    "head": {
+      "sha": "1111111111111111111111111111111111111111",
+      "repo": {"full_name": "coolamit/themis"}
+    }
+  },
+  "repository": {"full_name": "coolamit/themis"},
+  "sender": {"login": "coolamit"}
+}

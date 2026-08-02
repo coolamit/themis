@@ -1,0 +1,20 @@
+{
+  "action": "synchronize",
+  "number": 9,
+  "before": "1111111111111111111111111111111111111111",
+  "after": "3333333333333333333333333333333333333333",
+  "pull_request": {
+    "number": 9,
+    "base": {
+      "ref": "develop",
+      "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "repo": {"full_name": "coolamit/themis"}
+    },
+    "head": {
+      "sha": "3333333333333333333333333333333333333333",
+      "repo": {"full_name": "coolamit/themis"}
+    }
+  },
+  "repository": {"full_name": "coolamit/themis"},
+  "sender": {"login": "coolamit"}
+}

@@ -1,0 +1,320 @@
+name: 'Themis Code Review'
+description: >-
+  AI-powered PR review using Open Code Review (OCR): inline comments with
+  suggestions, content-fingerprint dedupe, comment budgeting, and an
+  optional severity merge gate. No Node.js, no npm — two static binaries.
+author: 'Amit Gupta'
+
+branding:
+  icon: 'shield'
+  color: 'purple'
+
+inputs:
+  llm-url:
+    description: >-
+      LLM provider base URL. OCR appends /chat/completions when the path
+      is missing (e.g. https://openrouter.ai/api/v1 is valid as-is).
+    required: true
+  llm-api-key:
+    description: 'LLM API key, from repository secrets.'
+    required: true
+  llm-model:
+    description: 'Model ID, exactly as the provider names it.'
+    required: true
+  github-token:
+    description: >-
+      Token used to post review comments and manage the review label.
+      Needs pull-requests: write.
+    required: false
+    default: ${{ github.token }}
+  language:
+    description: 'Language OCR writes review comments in.'
+    required: false
+    default: 'English'
+  fail-on-severity:
+    description: >-
+      Severity gate threshold (critical, high, medium, or low). Any new
+      finding at or above it fails the job with exit code 2. Empty
+      disables the gate (report-only).
+    required: false
+    default: ''
+  max-comments:
+    description: 'Maximum inline review comments per run; the rest go to one overflow summary.'
+    required: false
+    default: '25'
+  max-critical-comments:
+    description: 'Critical findings may exceed max-comments, up to this cap.'
+    required: false
+    default: '50'
+  enable-thinking:
+    description: >-
+      Set 'true' or 'false' to send {"thinking":{"type":...}} via OCR's
+      llm.extra_body. Unset sends nothing (the only universally safe
+      default). Strict OpenAI/Anthropic-direct APIs may reject this
+      dialect — use llm-extra-body there instead.
+    required: false
+    default: ''
+  review-label:
+    description: 'Label that triggers a review in the label (manual) trigger mode.'
+    required: false
+    default: 'themis-review'
+  llm-extra-body:
+    description: >-
+      Raw JSON merged into every LLM request body via OCR's
+      llm.extra_body. Wins over enable-thinking.
+    required: false
+    default: ''
+  protocol:
+    description: >-
+      LLM wire protocol: anthropic, openai, or openai-responses. Unset
+      uses the OpenAI protocol.
+    required: false
+    default: ''
+  auth-header:
+    description: 'Anthropic auth header name (x-api-key vs authorization).'
+    required: false
+    default: ''
+  extra-headers:
+    description: 'Custom HTTP headers for LLM requests, as K=V,K=V.'
+    required: false
+    default: ''
+  llm-timeout:
+    description: 'Per-request LLM timeout in seconds.'
+    required: false
+    default: ''
+  review-concurrency:
+    description: 'OCR review concurrency (--concurrency).'
+    required: false
+    default: ''
+  rule:
+    description: 'Repo-relative path to a custom OCR rules JSON file (--rule).'
+    required: false
+    default: ''
+  exclude:
+    description: 'File patterns to exclude from review (--exclude).'
+    required: false
+    default: ''
+  background:
+    description: 'Extra background/context text for the reviewer (--background).'
+    required: false
+    default: ''
+  max-tokens-budget:
+    description: 'Token budget cap for the review run (--max-tokens-budget).'
+    required: false
+    default: ''
+  ocr-version:
+    description: >-
+      OCR release to install. 'latest' resolves via the GitHub releases
+      API; pinning a specific version (e.g. 1.8.4) enables checksum
+      verification and is recommended for production.
+    required: false
+    default: 'latest'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Check out trusted base
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.base.ref }}
+        fetch-depth: 0
+
+    - name: Resolve review range
+      id: refs
+      shell: bash
+      env:
+        BASE_REF: ${{ github.event.pull_request.base.ref }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: '"$GITHUB_ACTION_PATH/scripts/resolve-refs.sh"'
+
+    - name: Guard label trigger
+      id: guard
+      if: github.event.action == 'labeled'
+      shell: bash
+      env:
+        EVENT_LABEL: ${{ github.event.label.name }}
+        REVIEW_LABEL: ${{ inputs.review-label }}
+        SENDER: ${{ github.event.sender.login }}
+        REPO: ${{ github.repository }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: '"$GITHUB_ACTION_PATH/scripts/label-guard.sh"'
+
+    - name: Preflight credentials
+      id: preflight
+      if: github.event.action != 'labeled' || steps.guard.outputs.proceed == 'true'
+      shell: bash
+      env:
+        LLM_URL: ${{ inputs.llm-url }}
+        LLM_API_KEY: ${{ inputs.llm-api-key }}
+        LLM_MODEL: ${{ inputs.llm-model }}
+        EVENT_NAME: ${{ github.event_name }}
+        IS_FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+        ACTOR: ${{ github.actor }}
+      run: '"$GITHUB_ACTION_PATH/scripts/preflight.sh"'
+
+    # Reads the PR head's .themisignore (gitignore-style patterns) and
+    # resolves which changed files to exclude from review. Sets
+    # skip=true when every changed file is ignored — the run then ends
+    # green without invoking OCR.
+    - name: Apply .themisignore
+      id: themisignore
+      if: steps.preflight.outputs.skip == 'false'
+      shell: bash
+      env:
+        MERGE_BASE: ${{ steps.refs.outputs.merge-base }}
+        HEAD_SHA: ${{ steps.refs.outputs.head-sha }}
+      run: '"$GITHUB_ACTION_PATH/scripts/themis-ignore.sh"'
+
+    - name: Install OCR
+      if: steps.preflight.outputs.skip == 'false' && steps.themisignore.outputs.skip != 'true'
+      shell: bash
+      env:
+        OCR_VERSION: ${{ inputs.ocr-version }}
+      run: '"$GITHUB_ACTION_PATH/scripts/install-ocr.sh"'
+
+    - name: Install themis-publish
+      if: steps.preflight.outputs.skip == 'false' && steps.themisignore.outputs.skip != 'true'
+      shell: bash
+      env:
+        ACTION_REF: ${{ github.action_ref }}
+      run: |
+        set -euo pipefail
+        dir="${RUNNER_TEMP}/themis-tools"
+        mkdir -p "$dir"
+        case "$ACTION_REF" in
+          v[0-9]*)
+            # A version tag maps to one release; verify the binary
+            # against the checksums file that release ships.
+            base="https://github.com/coolamit/themis/releases/download/${ACTION_REF}"
+            echo "Installing themis-publish from ${base}"
+            curl -fsSL --connect-timeout 10 --max-time 120 "${base}/themis-publish-linux-amd64" -o "$dir/themis-publish"
+            curl -fsSL --connect-timeout 10 --max-time 30 "${base}/checksums.txt" -o "$dir/checksums.txt"
+            expected="$(awk '$2 == "themis-publish-linux-amd64" {print $1}' "$dir/checksums.txt")"
+            if [ -z "$expected" ]; then
+              echo "::error::release ${ACTION_REF} records no checksum for themis-publish-linux-amd64"
+              exit 1
+            fi
+            actual="$(sha256sum "$dir/themis-publish" | awk '{print $1}')"
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::themis-publish checksum mismatch for ${ACTION_REF}: expected ${expected}, got ${actual}"
+              exit 1
+            fi
+            echo "Checksum verified for themis-publish ${ACTION_REF}"
+            ;;
+          *)
+            # Branch and SHA refs have no release of their own; the
+            # latest binary is mutable, so there is nothing trustworthy
+            # to verify against ahead of time.
+            url="https://github.com/coolamit/themis/releases/latest/download/themis-publish-linux-amd64"
+            echo "Installing themis-publish from ${url} (latest release, unverified)"
+            curl -fsSL --connect-timeout 10 --max-time 120 "$url" -o "$dir/themis-publish"
+            ;;
+        esac
+        chmod +x "$dir/themis-publish"
+        echo "$dir" >> "$GITHUB_PATH"
+
+    - name: Configure OCR
+      if: steps.preflight.outputs.skip == 'false' && steps.themisignore.outputs.skip != 'true'
+      shell: bash
+      env:
+        LANGUAGE: ${{ inputs.language }}
+        LLM_EXTRA_BODY: ${{ inputs.llm-extra-body }}
+        ENABLE_THINKING: ${{ inputs.enable-thinking }}
+        LLM_URL: ${{ inputs.llm-url }}
+        LLM_MODEL: ${{ inputs.llm-model }}
+        PROTOCOL: ${{ inputs.protocol }}
+        AUTH_HEADER: ${{ inputs.auth-header }}
+        EXTRA_HEADERS: ${{ inputs.extra-headers }}
+        LLM_TIMEOUT: ${{ inputs.llm-timeout }}
+      run: |
+        set -euo pipefail
+        ocr config set language "$LANGUAGE"
+        # llm-extra-body wins over enable-thinking; unset sends nothing.
+        if [ -n "$LLM_EXTRA_BODY" ]; then
+          ocr config set llm.extra_body "$LLM_EXTRA_BODY"
+        elif [ "$ENABLE_THINKING" = "true" ]; then
+          ocr config set llm.extra_body '{"thinking":{"type":"enabled"}}'
+        elif [ "$ENABLE_THINKING" = "false" ]; then
+          ocr config set llm.extra_body '{"thinking":{"type":"disabled"}}'
+        fi
+        {
+          echo "OCR_LLM_URL=$LLM_URL"
+          echo "OCR_LLM_MODEL=$LLM_MODEL"
+          if [ -n "$PROTOCOL" ]; then
+            echo "OCR_LLM_PROTOCOL=$PROTOCOL"
+          else
+            echo "OCR_USE_ANTHROPIC=false"
+          fi
+          if [ -n "$AUTH_HEADER" ]; then echo "OCR_LLM_AUTH_HEADER=$AUTH_HEADER"; fi
+          if [ -n "$EXTRA_HEADERS" ]; then echo "OCR_LLM_EXTRA_HEADERS=$EXTRA_HEADERS"; fi
+          if [ -n "$LLM_TIMEOUT" ]; then echo "OCR_LLM_TIMEOUT=$LLM_TIMEOUT"; fi
+        } >> "$GITHUB_ENV"
+
+    - name: Test LLM connectivity
+      if: steps.preflight.outputs.skip == 'false' && steps.themisignore.outputs.skip != 'true'
+      shell: bash
+      env:
+        OCR_LLM_TOKEN: ${{ inputs.llm-api-key }}
+      run: |
+        set -euo pipefail
+        if ! ocr llm test; then
+          echo "::error::LLM connectivity/credentials check failed: the configured llm-url, llm-api-key, and llm-model are not usable. (Not the fork-secrets skip — that exits successfully; this is a broken configuration.)"
+          exit 1
+        fi
+
+    - name: Run review
+      if: steps.preflight.outputs.skip == 'false' && steps.themisignore.outputs.skip != 'true'
+      shell: bash
+      env:
+        OCR_LLM_TOKEN: ${{ inputs.llm-api-key }}
+        MERGE_BASE: ${{ steps.refs.outputs.merge-base }}
+        HEAD_SHA: ${{ steps.refs.outputs.head-sha }}
+        CONCURRENCY: ${{ inputs.review-concurrency }}
+        RULE: ${{ inputs.rule }}
+        EXCLUDE: ${{ inputs.exclude }}
+        IGNORE_EXCLUDE: ${{ steps.themisignore.outputs.exclude }}
+        BACKGROUND: ${{ inputs.background }}
+        MAX_TOKENS_BUDGET: ${{ inputs.max-tokens-budget }}
+      run: |
+        set -euo pipefail
+        args=(review --from "$MERGE_BASE" --to "$HEAD_SHA" --format json --audience agent)
+        if [ -n "$CONCURRENCY" ]; then args+=(--concurrency "$CONCURRENCY"); fi
+        if [ -n "$RULE" ]; then args+=(--rule "$RULE"); fi
+        # One merged --exclude value: OCR keeps only the last occurrence
+        # of the flag, so the input patterns and the .themisignore paths
+        # must ride together.
+        combined="$EXCLUDE"
+        if [ -n "$IGNORE_EXCLUDE" ]; then combined="${combined:+${combined},}${IGNORE_EXCLUDE}"; fi
+        if [ -n "$combined" ]; then args+=(--exclude "$combined"); fi
+        if [ -n "$BACKGROUND" ]; then args+=(--background "$BACKGROUND"); fi
+        if [ -n "$MAX_TOKENS_BUDGET" ]; then args+=(--max-tokens-budget "$MAX_TOKENS_BUDGET"); fi
+        if ! ocr "${args[@]}" > "$RUNNER_TEMP/themis-result.json" 2> "$RUNNER_TEMP/themis-ocr.log"; then
+          echo "::error::ocr review exited non-zero; its stderr follows"
+          cat "$RUNNER_TEMP/themis-ocr.log"
+          exit 1
+        fi
+
+    - name: Publish findings
+      if: steps.preflight.outputs.skip == 'false' && steps.themisignore.outputs.skip != 'true'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        THEMIS_HEAD_SHA: ${{ steps.refs.outputs.head-sha }}
+        THEMIS_MAX_COMMENTS: ${{ inputs.max-comments }}
+        THEMIS_MAX_CRITICAL_COMMENTS: ${{ inputs.max-critical-comments }}
+        THEMIS_FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
+      run: themis-publish "$RUNNER_TEMP/themis-result.json"
+
+    # Gated on the guard's case-insensitive match, and removing the
+    # event's canonical label name — a review-label input differing only
+    # in case from the real label must still be cleaned up.
+    - name: Remove review label
+      if: always() && github.event.action == 'labeled' && steps.guard.outputs.label-match == 'true'
+      shell: bash
+      env:
+        REVIEW_LABEL: ${{ github.event.label.name }}
+        REPO: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: '"$GITHUB_ACTION_PATH/scripts/remove-label.sh"'

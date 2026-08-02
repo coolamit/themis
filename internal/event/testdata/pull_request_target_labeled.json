@@ -1,0 +1,19 @@
+{
+  "action": "labeled",
+  "number": 12,
+  "label": {"name": "themis-review", "color": "0e8a16"},
+  "pull_request": {
+    "number": 12,
+    "base": {
+      "ref": "master",
+      "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "repo": {"full_name": "coolamit/themis"}
+    },
+    "head": {
+      "sha": "2222222222222222222222222222222222222222",
+      "repo": {"full_name": "forker/themis"}
+    }
+  },
+  "repository": {"full_name": "coolamit/themis"},
+  "sender": {"login": "label-applier"}
+}
