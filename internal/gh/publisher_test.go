@@ -123,6 +123,22 @@ func TestPublishDedupesAcrossPagesAndCommentTypes(t *testing.T) {
 	}
 }
 
+func TestPublishDedupesWithinOneReport(t *testing.T) {
+	a := finding("a.go", "high")
+	f := newFakeGitHub(t)
+
+	res, err := f.publisher().Publish([]ocr.Comment{a, a})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if res.Deduped != 1 || res.Inline != 1 {
+		t.Errorf("Deduped = %d, Inline = %d, want 1/1", res.Deduped, res.Inline)
+	}
+	if len(f.reviews) != 1 || len(f.reviews[0].Comments) != 1 {
+		t.Fatalf("reviews posted = %+v, want one review with one comment", f.reviews)
+	}
+}
+
 func TestPublishSilentWhenNothingNew(t *testing.T) {
 	a, b := finding("a.go", "high"), finding("b.go", "low")
 	f := newFakeGitHub(t)
@@ -208,6 +224,30 @@ func TestPublish422FallbackChain(t *testing.T) {
 	}
 	if strings.Contains(f.issueComments[0], good1.Fingerprint()) {
 		t.Error("successfully posted finding leaked into the overflow summary")
+	}
+}
+
+func TestPublishAbortsOnServerErrorDuringRetry(t *testing.T) {
+	f := newFakeGitHub(t)
+	f.reviewResponder = func(req reviewRequest) int {
+		if len(req.Comments) > 1 {
+			return 422 // reject the batch to force individual retries
+		}
+		if req.Comments[0].Path == "boom.go" {
+			return 500
+		}
+		return 200
+	}
+
+	_, err := f.publisher().Publish([]ocr.Comment{finding("ok.go", "high"), finding("boom.go", "high")})
+	if err == nil {
+		t.Fatal("Publish succeeded despite 500 during an individual retry")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("error does not surface the status: %v", err)
+	}
+	if len(f.issueComments) != 0 {
+		t.Errorf("overflow summary posted despite aborted publish: %v", f.issueComments)
 	}
 }
 

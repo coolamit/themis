@@ -4,7 +4,7 @@ load helpers
 
 setup() {
   setup_gh_files
-  unset LLM_URL LLM_API_KEY LLM_MODEL EVENT_NAME IS_FORK || true
+  unset LLM_URL LLM_API_KEY LLM_MODEL EVENT_NAME IS_FORK ACTOR || true
 }
 
 @test "preflight passes with all credentials present" {
@@ -19,6 +19,14 @@ setup() {
   [ "$status" -eq 0 ]
   grep -q '^skip=true$' "$GITHUB_OUTPUT"
   grep -q 'fork PRs' "$GITHUB_STEP_SUMMARY"
+}
+
+@test "preflight cleanly skips a dependabot PR without credentials" {
+  EVENT_NAME=pull_request IS_FORK=false ACTOR='dependabot[bot]' \
+    run "$SCRIPTS_DIR/preflight.sh"
+  [ "$status" -eq 0 ]
+  grep -q '^skip=true$' "$GITHUB_OUTPUT"
+  grep -qi 'dependabot' "$GITHUB_STEP_SUMMARY"
 }
 
 @test "preflight hard-fails a misconfigured same-repo run" {

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Credential preflight. Distinguishes the two ways credentials can be
-# missing: a fork PR under a plain pull_request trigger (secrets are
-# structurally unavailable — clean skip, exit 0) versus a misconfigured
-# workflow (hard fail, exit 1). Never lets empty values reach OCR.
+# missing: structurally unavailable secrets under a plain pull_request
+# trigger (fork PRs, and Dependabot-authored PRs whose branches live in
+# the base repo — clean skip, exit 0) versus a misconfigured workflow
+# (hard fail, exit 1). Never lets empty values reach OCR.
 #
-# Inputs (env): LLM_URL, LLM_API_KEY, LLM_MODEL, EVENT_NAME, IS_FORK
+# Inputs (env): LLM_URL, LLM_API_KEY, LLM_MODEL, EVENT_NAME, IS_FORK, ACTOR
 # Outputs ($GITHUB_OUTPUT): skip=true|false
 set -euo pipefail
 
@@ -13,6 +14,7 @@ LLM_API_KEY="${LLM_API_KEY:-}"
 LLM_MODEL="${LLM_MODEL:-}"
 EVENT_NAME="${EVENT_NAME:-}"
 IS_FORK="${IS_FORK:-false}"
+ACTOR="${ACTOR:-}"
 OUT="${GITHUB_OUTPUT:-/dev/null}"
 SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
 
@@ -21,14 +23,14 @@ if [ -n "$LLM_URL" ] && [ -n "$LLM_API_KEY" ] && [ -n "$LLM_MODEL" ]; then
   exit 0
 fi
 
-if [ "$EVENT_NAME" = "pull_request" ] && [ "$IS_FORK" = "true" ]; then
+if [ "$EVENT_NAME" = "pull_request" ] && { [ "$IS_FORK" = "true" ] || [ "$ACTOR" = "dependabot[bot]" ]; }; then
   {
     echo "### Themis review skipped"
     echo ""
-    echo "Credentials are unavailable for fork PRs in this configuration: plain \`pull_request\` events never receive secrets on forks. This is expected, not an error. To review fork PRs, see the trigger-mode matrix in the Themis README."
+    echo "Credentials are unavailable in this configuration: plain \`pull_request\` events never receive repository secrets on fork PRs or Dependabot-authored PRs. This is expected, not an error. To review these PRs, see the trigger-mode matrix in the Themis README."
   } >> "$SUMMARY"
   echo "skip=true" >> "$OUT"
-  echo "Review skipped: credentials unavailable for fork PRs in this configuration."
+  echo "Review skipped: credentials structurally unavailable for this PR (fork or Dependabot under pull_request)."
   exit 0
 fi
 

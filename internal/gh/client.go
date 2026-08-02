@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // Client is a minimal GitHub REST API client built on the standard
@@ -18,9 +19,17 @@ type Client struct {
 	HTTP    *http.Client
 }
 
+// NewClient returns a client with a bounded per-request timeout so a
+// stalled connection surfaces as an operational error instead of
+// hanging the job. Replace HTTP to customize.
 func NewClient(baseURL, token string) *Client {
-	return &Client{BaseURL: strings.TrimRight(baseURL, "/"), Token: token, HTTP: http.DefaultClient}
+	return &Client{BaseURL: strings.TrimRight(baseURL, "/"), Token: token, HTTP: &http.Client{Timeout: 60 * time.Second}}
 }
+
+// maxResponseBytes caps response reads. It comfortably fits a full
+// 100-comment page of maximum-length bodies; anything larger fails with
+// an explicit error rather than truncating into a JSON parse failure.
+const maxResponseBytes = 10 << 20
 
 // APIError is a non-2xx response from the GitHub API.
 type APIError struct {
@@ -64,9 +73,12 @@ func (c *Client) do(method, url string, body, out any) (next string, err error) 
 		return "", fmt.Errorf("%s %s: %w", method, url, err)
 	}
 	defer resp.Body.Close()
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return "", fmt.Errorf("%s %s: reading response: %w", method, url, err)
+	}
+	if len(respBody) > maxResponseBytes {
+		return "", fmt.Errorf("%s %s: response exceeds %d bytes", method, url, maxResponseBytes)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return "", &APIError{StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(respBody))}

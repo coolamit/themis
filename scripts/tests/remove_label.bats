@@ -34,3 +34,24 @@ setup() {
   [ "$status" -eq 0 ]
   grep -q 'labels/needs%20review%21' "$CURL_STUB_URL_LOG"
 }
+
+@test "remove-label exits 0 without calling the API when the token is empty" {
+  export CURL_STUB_URL_LOG="$BATS_TEST_TMPDIR/urls"
+  stub_curl
+  GITHUB_TOKEN="" run "$SCRIPTS_DIR/remove-label.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"continuing"* ]]
+  [ ! -s "$CURL_STUB_URL_LOG" ]
+}
+
+@test "remove-label exits 0 when jq fails" {
+  stub_curl
+  cat > "$BATS_TEST_TMPDIR/bin/jq" <<'EOF'
+#!/usr/bin/env bash
+exit 127
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/bin/jq"
+  run "$SCRIPTS_DIR/remove-label.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"continuing"* ]]
+}

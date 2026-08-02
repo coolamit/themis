@@ -48,10 +48,12 @@ func (p *Publisher) Publish(findings []ocr.Comment) (*Result, error) {
 	res := &Result{}
 	var fresh []ocr.Comment
 	for _, c := range findings {
-		if seen[c.Fingerprint()] {
+		fp := c.Fingerprint()
+		if seen[fp] {
 			res.Deduped++
 			continue
 		}
+		seen[fp] = true
 		fresh = append(fresh, c)
 	}
 	res.NewFindings = fresh
@@ -102,9 +104,9 @@ func (p *Publisher) existingFingerprints() (map[string]bool, error) {
 
 // postInline posts findings as review comments in batches of at most
 // batchLimit. A rejected batch (422, typically a line outside the diff)
-// is retried comment by comment; comments that still fail are returned
-// so the caller can fold them into the overflow summary. Any other API
-// failure aborts.
+// is retried comment by comment; comments that still fail with 422 are
+// returned so the caller can fold them into the overflow summary. Any
+// other API failure — on a batch or an individual retry — aborts.
 func (p *Publisher) postInline(findings []ocr.Comment) (failed []ocr.Comment, err error) {
 	for start := 0; start < len(findings); start += batchLimit {
 		batch := findings[start:min(start+batchLimit, len(findings))]
@@ -121,6 +123,9 @@ func (p *Publisher) postInline(findings []ocr.Comment) (failed []ocr.Comment, er
 		}
 		for i, c := range batch {
 			if err := p.Client.CreateReview(p.Owner, p.Repo, p.Number, comments[i:i+1]); err != nil {
+				if !isUnprocessable(err) {
+					return nil, fmt.Errorf("creating review comment: %w", err)
+				}
 				failed = append(failed, c)
 			}
 		}
