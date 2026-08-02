@@ -174,6 +174,50 @@ func TestUntrustedStatusFixtures(t *testing.T) {
 	}
 }
 
+// Degenerate line info is not a decode error: such findings fail open
+// into the overflow summary instead of invalidating the whole report.
+func TestDecodeAcceptsDegenerateLineInfo(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"zero start_line", `{"status": "success", "comments": [{"path": "a.go", "content": "x", "start_line": 0, "end_line": 1}]}`},
+		{"negative start_line", `{"status": "success", "comments": [{"path": "a.go", "content": "x", "start_line": -3, "end_line": 1}]}`},
+		{"end before start", `{"status": "success", "comments": [{"path": "a.go", "content": "x", "start_line": 5, "end_line": 4}]}`},
+		{"no lines at all", `{"status": "success", "comments": [{"path": "a.go", "content": "x"}]}`},
+	}
+	for _, tc := range cases {
+		rep, err := Decode(strings.NewReader(tc.input))
+		if err != nil {
+			t.Errorf("%s: Decode rejected the report: %v", tc.name, err)
+			continue
+		}
+		if len(rep.Comments) != 1 || rep.Comments[0].HasUsableLines() {
+			t.Errorf("%s: comments = %+v, want one finding without usable lines", tc.name, rep.Comments)
+		}
+	}
+}
+
+func TestHasUsableLines(t *testing.T) {
+	cases := []struct {
+		start, end int
+		want       bool
+	}{
+		{1, 1, true},
+		{5, 9, true},
+		{0, 1, false},
+		{-3, 1, false},
+		{5, 4, false},
+		{0, 0, false},
+	}
+	for _, tc := range cases {
+		c := Comment{StartLine: tc.start, EndLine: tc.end}
+		if got := c.HasUsableLines(); got != tc.want {
+			t.Errorf("HasUsableLines(%d, %d) = %v, want %v", tc.start, tc.end, got, tc.want)
+		}
+	}
+}
+
 func TestDecodeRejectsBadInput(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -183,9 +227,6 @@ func TestDecodeRejectsBadInput(t *testing.T) {
 		{"missing status", `{}`},
 		{"empty status", `{"status": ""}`},
 		{"empty comment path", `{"status": "success", "comments": [{"path": "", "content": "x", "start_line": 1, "end_line": 1}]}`},
-		{"zero start_line", `{"status": "success", "comments": [{"path": "a.go", "content": "x", "start_line": 0, "end_line": 1}]}`},
-		{"negative start_line", `{"status": "success", "comments": [{"path": "a.go", "content": "x", "start_line": -3, "end_line": 1}]}`},
-		{"end before start", `{"status": "success", "comments": [{"path": "a.go", "content": "x", "start_line": 5, "end_line": 4}]}`},
 		{"empty content", `{"status": "success", "comments": [{"path": "a.go", "content": "", "start_line": 1, "end_line": 1}]}`},
 		{"whitespace-only content", `{"status": "success", "comments": [{"path": "a.go", "content": "  \n ", "start_line": 1, "end_line": 1}]}`},
 		{"trailing JSON document", `{"status": "success"} {"status": "failed"}`},

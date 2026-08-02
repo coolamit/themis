@@ -104,42 +104,95 @@ func linesMatchTrimmed(a, b string) bool {
 
 // DiffAnchor returns the fragment GitHub uses to link to a line of a
 // file in a PR's Files Changed view: sha256 of the path, plus the
-// right-side line number.
+// right-side line number. A non-positive line links to the file's diff
+// as a whole, without a line fragment.
 func DiffAnchor(path string, line int) string {
 	sum := sha256.Sum256([]byte(path))
-	return fmt.Sprintf("#diff-%sR%d", hex.EncodeToString(sum[:]), line)
+	anchor := "#diff-" + hex.EncodeToString(sum[:])
+	if line > 0 {
+		anchor += fmt.Sprintf("R%d", line)
+	}
+	return anchor
 }
 
 // RenderOverflowEntry builds one list entry of the overflow summary.
 // filesURL is the PR's Files Changed URL (…/pull/N/files). The entry
 // carries the same fingerprint marker as inline comments so overflow
-// findings dedupe across runs too.
+// findings dedupe across runs too. A finding without usable line info
+// is labeled by file alone and linked to the file's whole diff.
 func RenderOverflowEntry(c ocr.Comment, filesURL string) string {
-	lines := fmt.Sprintf("L%d", c.StartLine)
-	if c.EndLine > c.StartLine {
-		lines = fmt.Sprintf("L%d–%d", c.StartLine, c.EndLine)
+	label, line := fmt.Sprintf("`%s`", c.Path), 0
+	switch {
+	case !c.HasUsableLines():
+	case c.EndLine > c.StartLine:
+		label, line = fmt.Sprintf("`%s` L%d–%d", c.Path, c.StartLine, c.EndLine), c.StartLine
+	default:
+		label, line = fmt.Sprintf("`%s` L%d", c.Path, c.StartLine), c.StartLine
 	}
-	return fmt.Sprintf("- %s [**`%s` %s**](%s%s) — %s %s",
-		severityIcon(c.Severity), c.Path, lines,
-		filesURL, DiffAnchor(c.Path, c.StartLine),
+	return fmt.Sprintf("- %s [**%s**](%s%s) — %s %s",
+		severityIcon(c.Severity), label,
+		filesURL, DiffAnchor(c.Path, line),
 		truncateContent(c.Content), fpMarker(c))
 }
 
-// RenderOverflowSummary builds the issue comment that carries findings
+// overflowHeading and overflowIntro open every overflow summary comment.
+const (
+	overflowHeading = "### Themis review — additional findings"
+	overflowIntro   = "These findings did not fit the inline comment budget or could not be anchored to the diff:"
+)
+
+// maxOverflowBodyBytes caps each overflow summary body, with margin
+// under GitHub's 65536-character comment limit.
+const maxOverflowBodyBytes = 60000
+
+// RenderOverflowSummaries builds the issue comments that carry findings
 // which did not fit the inline budget (or could not be anchored to the
-// diff). Returns "" when there is nothing to report.
-func RenderOverflowSummary(comments []ocr.Comment, filesURL string) string {
+// diff). Entries are split at entry boundaries into as many bodies as
+// needed to stay under maxOverflowBodyBytes; each chunk repeats the
+// heading (annotated "(part n/N)" when there is more than one) and
+// carries its own entries' fingerprint markers, so dedupe keeps working
+// across chunks. Returns nil when there is nothing to report.
+func RenderOverflowSummaries(comments []ocr.Comment, filesURL string) []string {
 	if len(comments) == 0 {
-		return ""
+		return nil
 	}
-	var b strings.Builder
-	b.WriteString("### Themis review — additional findings\n\n")
-	b.WriteString("These findings did not fit the inline comment budget or could not be anchored to the diff:\n\n")
+	// Greedily pack rendered entries. The allowance reserves room for
+	// the part annotation, whose exact width is unknown until the chunk
+	// count is; entries are bounded (truncateContent), so a chunk never
+	// meaningfully undershoots the cap.
+	const partAllowance = len(" (part 9999/9999)")
+	budget := maxOverflowBodyBytes - len(overflowHeading) - partAllowance - len("\n\n") - len(overflowIntro) - len("\n\n")
+	var chunks [][]string
+	var cur []string
+	size := 0
 	for _, c := range comments {
-		b.WriteString(RenderOverflowEntry(c, filesURL))
-		b.WriteString("\n")
+		entry := RenderOverflowEntry(c, filesURL)
+		if len(cur) > 0 && size+len("\n")+len(entry) > budget {
+			chunks = append(chunks, cur)
+			cur, size = nil, 0
+		}
+		if len(cur) > 0 {
+			size += len("\n")
+		}
+		cur = append(cur, entry)
+		size += len(entry)
 	}
-	return strings.TrimRight(b.String(), "\n")
+	chunks = append(chunks, cur)
+
+	out := make([]string, len(chunks))
+	for i, entries := range chunks {
+		var b strings.Builder
+		b.WriteString(overflowHeading)
+		if len(chunks) > 1 {
+			fmt.Fprintf(&b, " (part %d/%d)", i+1, len(chunks))
+		}
+		b.WriteString("\n\n")
+		b.WriteString(overflowIntro)
+		b.WriteString("\n\n")
+		b.WriteString(strings.Join(entries, "\n"))
+		out[i] = b.String()
+	}
+	return out
 }
 
 // truncateContent trims a finding text to roughly two sentences,

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -174,6 +175,11 @@ func TestDiffAnchor(t *testing.T) {
 	if got := DiffAnchor("src/api.php", 42); got != want {
 		t.Errorf("DiffAnchor = %q, want %q", got, want)
 	}
+	// A non-positive line links to the file's diff without a fragment.
+	want = "#diff-" + hex.EncodeToString(sum[:])
+	if got := DiffAnchor("src/api.php", 0); got != want {
+		t.Errorf("DiffAnchor line 0 = %q, want %q", got, want)
+	}
 }
 
 func TestRenderOverflowEntry(t *testing.T) {
@@ -205,21 +211,75 @@ func TestRenderOverflowEntry(t *testing.T) {
 	}
 }
 
-func TestRenderOverflowSummary(t *testing.T) {
-	if got := RenderOverflowSummary(nil, ""); got != "" {
+func TestRenderOverflowEntryWithoutUsableLines(t *testing.T) {
+	c := ocr.Comment{Path: "src/api.php", Content: "No line info.", Severity: "high"}
+	sum := sha256.Sum256([]byte(c.Path))
+	entry := RenderOverflowEntry(c, "https://github.com/o/r/pull/7/files")
+	want := "- 🟠 [**`src/api.php`**](https://github.com/o/r/pull/7/files#diff-" + hex.EncodeToString(sum[:]) + ")"
+	if !strings.HasPrefix(entry, want) {
+		t.Errorf("line-less entry = %q, want prefix %q", entry, want)
+	}
+	if strings.Contains(entry, "R0") || strings.Contains(entry, "L0") {
+		t.Errorf("line-less entry renders a bogus line reference: %q", entry)
+	}
+	if !strings.Contains(entry, "themis-fp:"+c.Fingerprint()) {
+		t.Errorf("entry missing fp marker: %q", entry)
+	}
+
+	reversed := ocr.Comment{Path: "src/api.php", Content: "x", StartLine: 5, EndLine: 2, Severity: "high"}
+	if got := RenderOverflowEntry(reversed, ""); strings.Contains(got, "R5") || strings.Contains(got, "L5") {
+		t.Errorf("reversed-range entry renders a bogus line reference: %q", got)
+	}
+}
+
+func TestRenderOverflowSummaries(t *testing.T) {
+	if got := RenderOverflowSummaries(nil, ""); got != nil {
 		t.Errorf("empty overflow should render nothing, got %q", got)
 	}
 	comments := []ocr.Comment{
 		{Path: "a.go", Content: "One.", StartLine: 1, EndLine: 1, Severity: "high"},
 		{Path: "b.go", Content: "Two.", StartLine: 2, EndLine: 2, Severity: "low"},
 	}
-	summary := RenderOverflowSummary(comments, "https://github.com/o/r/pull/7/files")
-	if strings.Count(summary, "\n- ")+1 < 2 && strings.Count(summary, "- ") < 2 {
-		t.Errorf("summary missing entries: %q", summary)
+	filesURL := "https://github.com/o/r/pull/7/files"
+	out := RenderOverflowSummaries(comments, filesURL)
+	if len(out) != 1 {
+		t.Fatalf("small set rendered %d comments, want 1", len(out))
 	}
+	// A set that fits in one comment must keep the unchunked format:
+	// plain heading, entries newline-joined, no part annotation.
+	want := "### Themis review — additional findings\n\n" +
+		"These findings did not fit the inline comment budget or could not be anchored to the diff:\n\n" +
+		RenderOverflowEntry(comments[0], filesURL) + "\n" + RenderOverflowEntry(comments[1], filesURL)
+	if out[0] != want {
+		t.Errorf("single-chunk summary = %q, want %q", out[0], want)
+	}
+}
+
+func TestRenderOverflowSummariesChunks(t *testing.T) {
+	var comments []ocr.Comment
+	for i := 0; i < 400; i++ {
+		comments = append(comments, ocr.Comment{
+			Path: fmt.Sprintf("dir/file%03d.go", i), Content: strings.Repeat("y", 299) + ".",
+			StartLine: i + 1, EndLine: i + 1, Severity: "low",
+		})
+	}
+	out := RenderOverflowSummaries(comments, "https://github.com/o/r/pull/7/files")
+	if len(out) < 2 {
+		t.Fatalf("large set rendered %d comments, want several", len(out))
+	}
+	for i, body := range out {
+		if len(body) > maxOverflowBodyBytes {
+			t.Errorf("chunk %d is %d bytes, above the %d cap", i, len(body), maxOverflowBodyBytes)
+		}
+		if !strings.HasPrefix(body, fmt.Sprintf("### Themis review — additional findings (part %d/%d)\n\n", i+1, len(out))) {
+			t.Errorf("chunk %d heading wrong: %q", i, body[:80])
+		}
+	}
+	// Every entry lands in exactly one chunk, marker intact.
+	all := strings.Join(out, "\n")
 	for _, c := range comments {
-		if !strings.Contains(summary, "themis-fp:"+c.Fingerprint()) {
-			t.Errorf("summary missing marker for %s", c.Path)
+		if got := strings.Count(all, "themis-fp:"+c.Fingerprint()); got != 1 {
+			t.Errorf("marker for %s appears %d times across chunks, want 1", c.Path, got)
 		}
 	}
 }

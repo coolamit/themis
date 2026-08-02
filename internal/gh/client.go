@@ -110,39 +110,58 @@ func nextLink(header string) string {
 	return ""
 }
 
-type commentBody struct {
-	Body string `json:"body"`
+// User identifies a GitHub account by its login name.
+type User struct {
+	Login string `json:"login"`
 }
 
-// listCommentBodies walks every page of a comment-list endpoint and
-// returns just the comment bodies.
-func (c *Client) listCommentBodies(path string) ([]string, error) {
-	var bodies []string
+// ListedComment is one existing comment as returned by a comment-list
+// endpoint: its body and the account that wrote it. The author matters
+// because fingerprint markers are only trusted in comments Themis
+// itself posted (see Publisher.existingFingerprints).
+type ListedComment struct {
+	Body string `json:"body"`
+	User User   `json:"user"`
+}
+
+// listComments walks every page of a comment-list endpoint.
+func (c *Client) listComments(path string) ([]ListedComment, error) {
+	var comments []ListedComment
 	url := path + "?per_page=100"
 	for url != "" {
-		var page []commentBody
+		var page []ListedComment
 		next, err := c.do(http.MethodGet, url, nil, &page)
 		if err != nil {
 			return nil, err
 		}
-		for _, cb := range page {
-			bodies = append(bodies, cb.Body)
-		}
+		comments = append(comments, page...)
 		url = next
 	}
-	return bodies, nil
+	return comments, nil
 }
 
-// ListReviewCommentBodies returns the bodies of all inline review
-// comments on a pull request, across all pages.
-func (c *Client) ListReviewCommentBodies(owner, repo string, number int) ([]string, error) {
-	return c.listCommentBodies(fmt.Sprintf("/repos/%s/%s/pulls/%d/comments", owner, repo, number))
+// ListReviewComments returns all inline review comments on a pull
+// request, across all pages.
+func (c *Client) ListReviewComments(owner, repo string, number int) ([]ListedComment, error) {
+	return c.listComments(fmt.Sprintf("/repos/%s/%s/pulls/%d/comments", owner, repo, number))
 }
 
-// ListIssueCommentBodies returns the bodies of all issue comments on a
-// pull request (where overflow summaries are posted), across all pages.
-func (c *Client) ListIssueCommentBodies(owner, repo string, number int) ([]string, error) {
-	return c.listCommentBodies(fmt.Sprintf("/repos/%s/%s/issues/%d/comments", owner, repo, number))
+// ListIssueComments returns all issue comments on a pull request (where
+// overflow summaries are posted), across all pages.
+func (c *Client) ListIssueComments(owner, repo string, number int) ([]ListedComment, error) {
+	return c.listComments(fmt.Sprintf("/repos/%s/%s/issues/%d/comments", owner, repo, number))
+}
+
+// AuthenticatedLogin returns the login the token authenticates as (GET
+// /user). Any failure returns "" instead of an error — the default
+// Actions installation token gets a 403 here, and identifying the
+// poster is best-effort hardening that must never fail a publish.
+func (c *Client) AuthenticatedLogin() string {
+	var u User
+	if _, err := c.do(http.MethodGet, "/user", nil, &u); err != nil {
+		return ""
+	}
+	return u.Login
 }
 
 // reviewComment is one entry of a review's comments array. Line is the

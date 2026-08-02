@@ -134,7 +134,7 @@ on:
 
 > **Mode 4 known limitation:** if someone labels a *fork* PR in this mode, the workflow token is read-only, so Themis cannot remove the label — it posts a "review skipped" notice to the job summary and the label sits there. Harmless; it's GitHub's restriction, not Themis's.
 
-**Label flow:** only the configured `review-label` triggers anything (other labels are a silent no-op), and the labeler must have write, maintain, or admin permission — users with triage permission can apply labels, so the label alone is never trusted. One label application = one review; the label is removed when the run finishes, so re-apply it to re-review.
+**Label flow:** only the configured `review-label` triggers anything (other labels are a silent no-op), and the labeler must have write, maintain, or admin permission — users with triage permission can apply labels, so the label alone is never trusted. One label application = one review; the label is removed when the run finishes, so re-apply it to re-review. Stick to ASCII label names: the case-insensitive match folds ASCII only, so a `review-label` differing from the repo's label in non-ASCII case alone will silently never trigger.
 
 ## Inputs
 

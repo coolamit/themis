@@ -16,7 +16,7 @@ func TestClientRefusesCrossOriginPagination(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "test-token")
-	_, err := c.ListReviewCommentBodies("o", "r", 1)
+	_, err := c.ListReviewComments("o", "r", 1)
 	if err == nil {
 		t.Fatal("cross-origin Link URL was followed")
 	}
@@ -32,7 +32,7 @@ func TestClientRejectsOversizedResponse(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, "test-token")
-	_, err := c.ListReviewCommentBodies("o", "r", 1)
+	_, err := c.ListReviewComments("o", "r", 1)
 	if err == nil {
 		t.Fatal("oversized response was accepted")
 	}

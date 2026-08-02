@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/coolamit/themis/internal/ocr"
 )
@@ -11,6 +12,10 @@ import (
 // batchLimit is the maximum number of comments per created review; the
 // API rejects larger batches.
 const batchLimit = 50
+
+// defaultBotLogin is the account the default Actions GITHUB_TOKEN posts
+// as; comments it authored are always trusted for dedupe markers.
+const defaultBotLogin = "github-actions[bot]"
 
 var fpMarkerRe = regexp.MustCompile(`themis-fp:([0-9a-f]{16})`)
 
@@ -35,10 +40,12 @@ type Result struct {
 	Deduped     int
 }
 
-// Publish deduplicates findings against every fingerprint already on
-// the PR, budgets the survivors, posts inline comments in batches, and
-// folds everything else into one overflow summary comment. When there
-// is nothing new it posts nothing at all.
+// Publish deduplicates findings against every fingerprint Themis
+// itself already posted on the PR (markers written by anyone else are
+// ignored — see existingFingerprints), budgets the survivors, posts
+// inline comments in batches, and folds everything else into overflow
+// summary comments, chunked to stay under GitHub's body-size cap. When
+// there is nothing new it posts nothing at all.
 func (p *Publisher) Publish(findings []ocr.Comment) (*Result, error) {
 	seen, err := p.existingFingerprints()
 	if err != nil {
@@ -71,8 +78,7 @@ func (p *Publisher) Publish(findings []ocr.Comment) (*Result, error) {
 	res.Inline = len(sel.Inline) - len(failed)
 	overflow = append(overflow, failed...)
 
-	if len(overflow) > 0 {
-		summary := RenderOverflowSummary(overflow, p.FilesURL)
+	for _, summary := range RenderOverflowSummaries(overflow, p.FilesURL) {
 		if err := p.Client.CreateIssueComment(p.Owner, p.Repo, p.Number, summary); err != nil {
 			return nil, fmt.Errorf("posting overflow summary: %w", err)
 		}
@@ -83,23 +89,40 @@ func (p *Publisher) Publish(findings []ocr.Comment) (*Result, error) {
 
 // existingFingerprints collects every themis-fp marker already present
 // on the PR — inline review comments and issue comments (where overflow
-// summaries live) alike.
+// summaries live) alike. Only comments authored by the publishing
+// identity are honored: github-actions[bot] (what the default Actions
+// token posts as) or the token's own login when it resolves. A
+// fingerprint is computable from the PR's code alone, so trusting
+// markers from arbitrary commenters would let a PR author suppress
+// findings — and the severity gate — by pre-posting them.
 func (p *Publisher) existingFingerprints() (map[string]bool, error) {
-	review, err := p.Client.ListReviewCommentBodies(p.Owner, p.Repo, p.Number)
+	review, err := p.Client.ListReviewComments(p.Owner, p.Repo, p.Number)
 	if err != nil {
 		return nil, err
 	}
-	issue, err := p.Client.ListIssueCommentBodies(p.Owner, p.Repo, p.Number)
+	issue, err := p.Client.ListIssueComments(p.Owner, p.Repo, p.Number)
 	if err != nil {
 		return nil, err
 	}
+	self := p.Client.AuthenticatedLogin()
 	seen := make(map[string]bool)
-	for _, body := range append(review, issue...) {
-		for _, m := range fpMarkerRe.FindAllStringSubmatch(body, -1) {
+	for _, c := range append(review, issue...) {
+		if !trustedAuthor(c.User.Login, self) {
+			continue
+		}
+		for _, m := range fpMarkerRe.FindAllStringSubmatch(c.Body, -1) {
 			seen[m[1]] = true
 		}
 	}
 	return seen, nil
+}
+
+// trustedAuthor reports whether dedupe markers in a comment by login
+// may be honored. GitHub logins are case-insensitively unique, hence
+// EqualFold.
+func trustedAuthor(login, self string) bool {
+	return strings.EqualFold(login, defaultBotLogin) ||
+		(self != "" && strings.EqualFold(login, self))
 }
 
 // postInline posts findings as review comments in batches of at most

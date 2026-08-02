@@ -28,7 +28,10 @@ func NormalizeWS(s string) string {
 // same path+category would collapse to one identity and dedupe would
 // silently drop all but the first. The trade-off is that such findings
 // repost when their lines drift — acceptable for the rare case, since
-// the LLM-worded content is too nondeterministic to hash instead.
+// the LLM-worded content is too nondeterministic to hash instead. A
+// finding with neither snippet nor usable line info yields "L0-0" —
+// deterministic, and collisions between such doubly-degenerate findings
+// on the same path+category are accepted.
 func (c Comment) Fingerprint() string {
 	identity := NormalizeWS(c.ExistingCode)
 	if identity == "" {

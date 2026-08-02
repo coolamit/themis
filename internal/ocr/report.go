@@ -91,6 +91,10 @@ func DecodeFile(path string) (*Report, error) {
 	return Decode(f)
 }
 
+// validate is the schema-drift safety net. Line numbers are
+// deliberately not validated: a finding with degenerate line info fails
+// open into the overflow summary (see HasUsableLines) instead of
+// invalidating the whole report.
 func (r *Report) validate() error {
 	if r.Status == "" {
 		return fmt.Errorf("missing status")
@@ -102,14 +106,15 @@ func (r *Report) validate() error {
 		if strings.TrimSpace(c.Content) == "" {
 			return fmt.Errorf("comment %d (%s): empty content", i, c.Path)
 		}
-		if c.StartLine <= 0 {
-			return fmt.Errorf("comment %d (%s): start_line %d is not positive", i, c.Path, c.StartLine)
-		}
-		if c.EndLine < c.StartLine {
-			return fmt.Errorf("comment %d (%s): end_line %d precedes start_line %d", i, c.Path, c.EndLine, c.StartLine)
-		}
 	}
 	return nil
+}
+
+// HasUsableLines reports whether StartLine and EndLine form a valid
+// 1-based range. Findings without one cannot anchor to the diff and
+// land in the overflow summary instead.
+func (c Comment) HasUsableLines() bool {
+	return c.StartLine > 0 && c.EndLine >= c.StartLine
 }
 
 // ReviewRan reports whether the review actually completed, i.e. the

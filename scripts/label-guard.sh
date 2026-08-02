@@ -28,7 +28,11 @@ OUT="${GITHUB_OUTPUT:-/dev/null}"
 SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
 
 # tr, not ${var,,}: the latter needs bash 4+ and this script also runs
-# under macOS's bash 3.2 in the local test suite.
+# under macOS's bash 3.2 in the local test suite. Known limitation: the
+# fold is ASCII-only (no portable alternative exists across bash 3.2 and
+# BSD/mawk userlands), so labels differing only in non-ASCII case (e.g.
+# Über-review vs über-review) never match — the guard then no-ops, which
+# is the safe direction. Use ASCII label names.
 event_lc="$(printf '%s' "$EVENT_LABEL" | tr '[:upper:]' '[:lower:]')"
 review_lc="$(printf '%s' "$REVIEW_LABEL" | tr '[:upper:]' '[:lower:]')"
 

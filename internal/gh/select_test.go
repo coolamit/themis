@@ -136,3 +136,24 @@ func TestSelectClampsNegativeBudgets(t *testing.T) {
 		t.Errorf("negative budgets: inline=%d overflow=%d, want 0/5", len(sel.Inline), len(sel.Overflow))
 	}
 }
+
+// Findings without usable line info cannot anchor inline; they must go
+// to overflow even when the budget has room, regardless of severity.
+func TestSelectLinelessFindingsGoToOverflow(t *testing.T) {
+	lineless := ocr.Comment{Path: "no-lines.go", Content: "x", Severity: "critical"}
+	reversed := ocr.Comment{Path: "reversed.go", Content: "x", StartLine: 5, EndLine: 2, Severity: "critical"}
+	usable := ocr.Comment{Path: "usable.go", Content: "x", StartLine: 1, EndLine: 1, Severity: "low"}
+
+	sel := Select([]ocr.Comment{lineless, usable, reversed}, 25, 50)
+	if len(sel.Inline) != 1 || sel.Inline[0].Path != "usable.go" {
+		t.Errorf("inline = %+v, want only the usable finding", sel.Inline)
+	}
+	if len(sel.Overflow) != 2 {
+		t.Fatalf("overflow = %d, want 2", len(sel.Overflow))
+	}
+	for _, c := range sel.Overflow {
+		if c.Path != "no-lines.go" && c.Path != "reversed.go" {
+			t.Errorf("unexpected overflow finding %s", c.Path)
+		}
+	}
+}

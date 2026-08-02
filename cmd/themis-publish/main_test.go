@@ -23,10 +23,20 @@ func (f *fakeAPI) handle(w http.ResponseWriter, r *http.Request) {
 		Body string `json:"body"`
 	}
 	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/user":
+		// The default Actions installation token cannot see /user.
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"message":"Resource not accessible by integration"}`)
 	case r.Method == http.MethodGet && r.URL.Path == "/repos/coolamit/themis/pulls/7/comments":
-		var out []body
+		// Existing comments are authored by github-actions[bot] — the
+		// identity whose dedupe markers the publisher trusts.
+		type comment struct {
+			Body string            `json:"body"`
+			User map[string]string `json:"user"`
+		}
+		var out []comment
 		for _, b := range f.existingReviewBodies {
-			out = append(out, body{Body: b})
+			out = append(out, comment{Body: b, User: map[string]string{"login": "github-actions[bot]"}})
 		}
 		json.NewEncoder(w).Encode(out)
 	case r.Method == http.MethodGet && r.URL.Path == "/repos/coolamit/themis/issues/7/comments":
@@ -202,6 +212,9 @@ func TestRunLabeledForkEvent(t *testing.T) {
 	f := &fakeAPI{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/user":
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `{}`)
 		case "/repos/coolamit/themis/pulls/12/comments", "/repos/coolamit/themis/issues/12/comments":
 			if r.Method == http.MethodGet {
 				fmt.Fprint(w, "[]")

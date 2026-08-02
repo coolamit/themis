@@ -12,11 +12,12 @@ import (
 	"github.com/coolamit/themis/internal/ocr"
 )
 
-// fakeGitHub simulates the four GitHub endpoints the publisher touches.
+// fakeGitHub simulates the five GitHub endpoints the publisher touches.
 type fakeGitHub struct {
 	srv             *httptest.Server
-	reviewPages     [][]string // pages of existing review comment bodies
-	issuePages      [][]string // pages of existing issue comment bodies
+	reviewPages     [][]ListedComment // pages of existing review comments
+	issuePages      [][]ListedComment // pages of existing issue comments
+	userLogin       string            // GET /user login; "" = 403, like the Actions token
 	reviews         []reviewRequest
 	issueComments   []string
 	reviewResponder func(req reviewRequest) int // 0 or 200 = accepted
@@ -32,6 +33,13 @@ func newFakeGitHub(t *testing.T) *fakeGitHub {
 
 func (f *fakeGitHub) handle(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/user":
+		if f.userLogin == "" {
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `{"message":"Resource not accessible by integration"}`)
+			return
+		}
+		json.NewEncoder(w).Encode(User{Login: f.userLogin})
 	case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls/1/comments":
 		f.servePages(w, r, f.reviewPages)
 	case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/1/comments":
@@ -49,7 +57,7 @@ func (f *fakeGitHub) handle(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(status)
 		fmt.Fprint(w, `{"message":"stub"}`)
 	case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues/1/comments":
-		var cb commentBody
+		var cb ListedComment
 		json.NewDecoder(r.Body).Decode(&cb)
 		f.issueComments = append(f.issueComments, cb.Body)
 		w.WriteHeader(http.StatusCreated)
@@ -59,21 +67,19 @@ func (f *fakeGitHub) handle(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (f *fakeGitHub) servePages(w http.ResponseWriter, r *http.Request, pages [][]string) {
+func (f *fakeGitHub) servePages(w http.ResponseWriter, r *http.Request, pages [][]ListedComment) {
 	page := 1
 	if p := r.URL.Query().Get("page"); p != "" {
 		page, _ = strconv.Atoi(p)
 	}
-	bodies := []commentBody{}
+	comments := []ListedComment{}
 	if page <= len(pages) {
-		for _, b := range pages[page-1] {
-			bodies = append(bodies, commentBody{Body: b})
-		}
+		comments = append(comments, pages[page-1]...)
 	}
 	if page < len(pages) {
 		w.Header().Set("Link", fmt.Sprintf(`<%s%s?per_page=100&page=%d>; rel="next"`, f.srv.URL, r.URL.Path, page+1))
 	}
-	json.NewEncoder(w).Encode(bodies)
+	json.NewEncoder(w).Encode(comments)
 }
 
 func (f *fakeGitHub) publisher() *Publisher {
@@ -96,14 +102,24 @@ func marker(c ocr.Comment) string {
 	return "<!-- themis-fp:" + c.Fingerprint() + " -->"
 }
 
+// botComment wraps a body as a comment authored by github-actions[bot],
+// the identity whose markers the publisher trusts by default.
+func botComment(body string) ListedComment {
+	return ListedComment{Body: body, User: User{Login: "github-actions[bot]"}}
+}
+
+func authoredComment(login, body string) ListedComment {
+	return ListedComment{Body: body, User: User{Login: login}}
+}
+
 func TestPublishDedupesAcrossPagesAndCommentTypes(t *testing.T) {
 	a, b, c, d := finding("a.go", "high"), finding("b.go", "high"), finding("c.go", "high"), finding("d.go", "high")
 	f := newFakeGitHub(t)
-	f.reviewPages = [][]string{
-		{"some other comment", "review comment\n" + marker(a)},
-		{"page two comment\n" + marker(b)},
+	f.reviewPages = [][]ListedComment{
+		{botComment("some other comment"), botComment("review comment\n" + marker(a))},
+		{botComment("page two comment\n" + marker(b))},
 	}
-	f.issuePages = [][]string{{"overflow summary\n" + marker(c)}}
+	f.issuePages = [][]ListedComment{{botComment("overflow summary\n" + marker(c))}}
 
 	res, err := f.publisher().Publish([]ocr.Comment{a, b, c, d})
 	if err != nil {
@@ -142,7 +158,7 @@ func TestPublishDedupesWithinOneReport(t *testing.T) {
 func TestPublishSilentWhenNothingNew(t *testing.T) {
 	a, b := finding("a.go", "high"), finding("b.go", "low")
 	f := newFakeGitHub(t)
-	f.reviewPages = [][]string{{marker(a), marker(b)}}
+	f.reviewPages = [][]ListedComment{{botComment(marker(a)), botComment(marker(b))}}
 
 	res, err := f.publisher().Publish([]ocr.Comment{a, b})
 	if err != nil {
@@ -303,5 +319,107 @@ func TestPublishMultiLineCommentShape(t *testing.T) {
 	rc = f2.reviews[0].Comments[0]
 	if rc.Line != 3 || rc.StartLine != 0 || rc.StartSide != "" {
 		t.Errorf("single-line comment shape = %+v", rc)
+	}
+}
+
+// A PR author can compute fingerprints for their own code, so markers
+// in comments from anyone but the publishing identity must not dedupe —
+// otherwise pre-posting them would suppress findings and the gate.
+// Markers from github-actions[bot] must keep deduping even though GET
+// /user answers 403 for the Actions token (userLogin is unset here).
+func TestPublishIgnoresMarkersFromUntrustedAuthors(t *testing.T) {
+	a, b, c := finding("a.go", "high"), finding("b.go", "high"), finding("c.go", "high")
+	f := newFakeGitHub(t)
+	f.reviewPages = [][]ListedComment{{
+		authoredComment("mallory", "nice PR!\n"+marker(a)),
+		botComment(marker(b)),
+	}}
+	f.issuePages = [][]ListedComment{{authoredComment("mallory", marker(c))}}
+
+	res, err := f.publisher().Publish([]ocr.Comment{a, b, c})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if res.Deduped != 1 {
+		t.Errorf("Deduped = %d, want 1 (only the bot-authored marker)", res.Deduped)
+	}
+	if res.Inline != 2 || len(res.NewFindings) != 2 {
+		t.Errorf("Inline = %d, NewFindings = %d, want 2/2", res.Inline, len(res.NewFindings))
+	}
+	if len(f.reviews) != 1 || len(f.reviews[0].Comments) != 2 {
+		t.Fatalf("reviews posted = %+v, want one review with two comments", f.reviews)
+	}
+	for i, want := range []ocr.Comment{a, c} {
+		if !strings.Contains(f.reviews[0].Comments[i].Body, want.Fingerprint()) {
+			t.Errorf("posted comment %d is not the expected finding: %q", i, f.reviews[0].Comments[i].Body)
+		}
+	}
+}
+
+// When the token resolves to a real user (a PAT), that user's own
+// comments carry trusted markers. GitHub logins are case-insensitive,
+// so a case difference must not break the match.
+func TestPublishTrustsAuthenticatedLogin(t *testing.T) {
+	a, b := finding("a.go", "high"), finding("b.go", "high")
+	f := newFakeGitHub(t)
+	f.userLogin = "review-bot"
+	f.reviewPages = [][]ListedComment{{
+		authoredComment("Review-Bot", marker(a)),
+		authoredComment("mallory", marker(b)),
+	}}
+
+	res, err := f.publisher().Publish([]ocr.Comment{a, b})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if res.Deduped != 1 {
+		t.Errorf("Deduped = %d, want 1 (the PAT user's marker)", res.Deduped)
+	}
+	if len(f.reviews) != 1 || len(f.reviews[0].Comments) != 1 {
+		t.Fatalf("reviews posted = %+v, want one review with one comment", f.reviews)
+	}
+	if !strings.Contains(f.reviews[0].Comments[0].Body, b.Fingerprint()) {
+		t.Errorf("posted comment is not finding b: %q", f.reviews[0].Comments[0].Body)
+	}
+}
+
+func TestPublishChunksOverflowSummary(t *testing.T) {
+	// 300 findings with 300-rune contents overflow entirely (zero
+	// budgets) and exceed one comment body's worth of entries.
+	content := strings.Repeat("x", 300) + "."
+	var findings []ocr.Comment
+	for i := 0; i < 300; i++ {
+		findings = append(findings, ocr.Comment{
+			Path: fmt.Sprintf("file%03d.go", i), Content: content,
+			StartLine: 1, EndLine: 1, Severity: "medium",
+		})
+	}
+	f := newFakeGitHub(t)
+	p := f.publisher()
+	p.MaxComments = 0
+	p.MaxCritical = 0
+
+	res, err := p.Publish(findings)
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if res.Overflow != 300 {
+		t.Errorf("Overflow = %d, want 300", res.Overflow)
+	}
+	if len(f.issueComments) < 2 {
+		t.Fatalf("got %d issue comments, want the overflow summary chunked into several", len(f.issueComments))
+	}
+	markers := 0
+	for i, body := range f.issueComments {
+		if len(body) > 65536 {
+			t.Errorf("chunk %d is %d bytes, above GitHub's comment cap", i, len(body))
+		}
+		if !strings.Contains(body, fmt.Sprintf("(part %d/%d)", i+1, len(f.issueComments))) {
+			t.Errorf("chunk %d missing its part annotation: %q", i, body[:80])
+		}
+		markers += strings.Count(body, "themis-fp:")
+	}
+	if markers != 300 {
+		t.Errorf("chunks carry %d markers in total, want 300 (no entry lost)", markers)
 	}
 }
