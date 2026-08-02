@@ -1,0 +1,160 @@
+{
+  "status": "complete",
+  "message": "Review complete: 7 finding(s) across 3 selected item(s).",
+  "summary": {
+    "files_reviewed": 3,
+    "comments": 7,
+    "total_tokens": 151719,
+    "input_tokens": 141548,
+    "output_tokens": 10171,
+    "cache_read_tokens": 89044,
+    "elapsed": "40s"
+  },
+  "tool_calls": {
+    "total": 8,
+    "by_tool": {
+      "code_comment": 3,
+      "code_search": 2,
+      "file_read": 2,
+      "file_read_diff": 1
+    }
+  },
+  "comments": [
+    {
+      "path": ".github/workflows/themis.yml",
+      "content": "This third-party action is referenced by a mutable branch. In the `pull_request_target` run it executes with `pull-requests: write` and access to `LLM_API_KEY`, so a branch update or compromise in the action repository could execute arbitrary code with those privileges. Pin the action to a reviewed full commit SHA (and update it deliberately).",
+      "suggestion_code": "      - uses: coolamit/themis@\u003creviewed-full-commit-sha\u003e",
+      "existing_code": "      - uses: coolamit/themis@test/source-build",
+      "start_line": 28,
+      "end_line": 28,
+      "category": "security",
+      "severity": "high"
+    },
+    {
+      "path": ".github/workflows/themis.yml",
+      "content": "The workflow can accumulate redundant reviews when multiple pushes or label events arrive close together. Add a concurrency group keyed by repository and pull request (with `cancel-in-progress: true`) so superseded runs do not consume runners or duplicate review comments.",
+      "suggestion_code": "name: Code review\n\nconcurrency:\n  group: themis-${{ github.repository }}-pr-${{ github.event.pull_request.number || github.run_id }}\n  cancel-in-progress: true",
+      "existing_code": "name: Code review",
+      "start_line": 12,
+      "end_line": 12,
+      "category": "performance",
+      "severity": "low"
+    },
+    {
+      "path": ".github/workflows/themis.yml",
+      "content": "There is no job timeout, so a hung action or LLM request can consume an Ubuntu runner indefinitely. Set an appropriate `timeout-minutes` value on this job.",
+      "suggestion_code": "  review:\n    runs-on: ubuntu-latest\n    timeout-minutes: 15",
+      "existing_code": "  review:\n    runs-on: ubuntu-latest",
+      "start_line": 25,
+      "end_line": 26,
+      "category": "performance",
+      "severity": "medium"
+    },
+    {
+      "path": "index.php",
+      "content": "The `in_array` arguments are reversed: its first argument is the needle and its second argument must be the array haystack. With any non-empty `fruit`, `$fruit` is passed as the haystack, causing a `TypeError` on PHP 8+ (and preventing the stock/out-of-stock response). Pass `$fruit` first and `$fruits` second.",
+      "suggestion_code": "$isFruitValid = in_array($fruit, $fruits, true);",
+      "existing_code": "$isFruitValid = in_array($fruits, $fruit, true);",
+      "start_line": 22,
+      "end_line": 22,
+      "category": "bug",
+      "severity": "high"
+    },
+    {
+      "path": "index.php",
+      "content": "This message contradicts the condition: `1 \u003e $code` is true when the code is less than 1, so requests with values below 1 are reported as greater than 1. Swap this text (and the corresponding `else` text) or adjust the condition.",
+      "suggestion_code": "\techo 'Code is less than 1';",
+      "existing_code": "\techo 'Code is greater than 1';",
+      "start_line": 6,
+      "end_line": 6,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": "index.php",
+      "content": "The `else` branch is reached when `$code` is greater than or equal to 1, but this newly changed message says it is less than 1. This produces an incorrect response for the normal code path.",
+      "suggestion_code": "\techo 'Code is greater than or equal to 1';",
+      "existing_code": "\techo 'Code is less than 1';",
+      "start_line": 8,
+      "end_line": 8,
+      "category": "bug",
+      "severity": "medium"
+    },
+    {
+      "path": ".github/workflows/themis.yml",
+      "content": "The API key is supplied as a workflow expression in an action `with` input. Action inputs can be exposed to the action implementation or appear in diagnostic/process data more readily than environment variables; avoid passing credentials as inputs when possible, and use the action's documented environment-variable mechanism (or otherwise ensure it does not log the input).",
+      "suggestion_code": "        env:\n          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}",
+      "existing_code": "          llm-api-key: ${{ secrets.LLM_API_KEY }}",
+      "start_line": 31,
+      "end_line": 31,
+      "category": "security",
+      "severity": "medium"
+    }
+  ],
+  "session_id": "f8aed529-c0e1-400a-9bd0-59412eb12011",
+  "manifest": {
+    "schema_version": "ocr.run-manifest/v1",
+    "run_id": "f8aed529-c0e1-400a-9bd0-59412eb12011",
+    "operation": "review",
+    "terminal_state": "complete",
+    "repository": {
+      "identity_sha256": "d586c4f041cdc4c9caa5b883b1fe301ce52af07ba66eb82abe83cc2732b1fd93"
+    },
+    "input": {
+      "mode": "range",
+      "requested_from": "master",
+      "requested_head": "HEAD",
+      "resolved_base": "bf095297440228655baa571d1d19c01bb522b36d",
+      "resolved_head": "c53f7d1c53989ba20c75238187e3f964fd45fcbe",
+      "exact_range": "bf095297440228655baa571d1d19c01bb522b36d..c53f7d1c53989ba20c75238187e3f964fd45fcbe",
+      "source_artifact_sha256": "37c1a74de648b8017269c9d39833978886982c65bbd6445f88f7f54464d45200"
+    },
+    "execution": {
+      "ocr_version": "v1.8.5",
+      "model": "openai/gpt-5.6-luna-pro",
+      "configured_concurrency": 8,
+      "rule_config_sha256": "823a108127db3da2ffc880ee2ef6c1b8b5c9094d04f6ed8dafb0fac661f88bba",
+      "runtime_config_sha256": "e4edd03f757ef2b2aab592a174ed259f3347cb6d236e22dc3867b8198f71b1fb"
+    },
+    "coverage": {
+      "selected": [
+        {
+          "item_id": "6b2012a434bfa2d33ebcb426e34f3f8d616300d923073b82845c43bc516108c6",
+          "path": "functions.php",
+          "fingerprint": "109e2bc4e241e2111240d64c7ae9d6914e66ca3ff195ddb1c22269dc00ccba4d"
+        },
+        {
+          "item_id": "cbbab9df15d7bee4f52d8630cb9c04581760bbbe80208a7f7a7a58fd4839d80f",
+          "path": ".github/workflows/themis.yml",
+          "fingerprint": "0eb77c9a30225153a80a7479b6f338eba93c1294f0937ce784dcbb1d51ac7864"
+        },
+        {
+          "item_id": "f0705e10e86afb4953d449d499375a7ffb9aec70611be3c80878e643be807736",
+          "path": "index.php",
+          "fingerprint": "01b60cbce7d258b92eda8aefff0cdf450636d130279c3adcd2369c06cd54111a"
+        }
+      ],
+      "completed": [
+        {
+          "item_id": "6b2012a434bfa2d33ebcb426e34f3f8d616300d923073b82845c43bc516108c6",
+          "path": "functions.php",
+          "fingerprint": "109e2bc4e241e2111240d64c7ae9d6914e66ca3ff195ddb1c22269dc00ccba4d"
+        },
+        {
+          "item_id": "cbbab9df15d7bee4f52d8630cb9c04581760bbbe80208a7f7a7a58fd4839d80f",
+          "path": ".github/workflows/themis.yml",
+          "fingerprint": "0eb77c9a30225153a80a7479b6f338eba93c1294f0937ce784dcbb1d51ac7864"
+        },
+        {
+          "item_id": "f0705e10e86afb4953d449d499375a7ffb9aec70611be3c80878e643be807736",
+          "path": "index.php",
+          "fingerprint": "01b60cbce7d258b92eda8aefff0cdf450636d130279c3adcd2369c06cd54111a"
+        }
+      ],
+      "reused": [],
+      "failed": [],
+      "waived": []
+    },
+    "elapsed_ms": 39638
+  }
+}

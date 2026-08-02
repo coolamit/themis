@@ -10,10 +10,13 @@
 #   INSTALL_DIR    where to place the binary; default $RUNNER_TEMP/themis-tools
 #   CHECKSUM_FILE  recorded checksums; default ocr-checksums.txt next to this script
 #
-# A pinned version must have a recorded checksum and is always
-# verified — no recorded hash means no install. "latest" cannot be
-# verified (there is nothing trustworthy to compare against ahead of
-# time) and installs with a warning.
+# Support policy: the 3 newest OCR releases are officially supported —
+# the window is resolved live from the releases API, never derived by
+# version arithmetic. Older pins install with an "unsupported" warning.
+#
+# Checksum policy (uniform for pinned and resolved-latest installs): a
+# version with a recorded hash is verified and a mismatch fails the
+# install; a version without one installs unverified with a warning.
 set -euo pipefail
 
 OCR_VERSION="${OCR_VERSION:-latest}"
@@ -33,7 +36,6 @@ compute_sha256() {
 }
 
 if [ "$OCR_VERSION" = "latest" ]; then
-  echo "::warning::installing the latest OCR release without checksum verification; pin ocr-version for a verified install"
   tag="$(curl -fsSL --connect-timeout 10 --max-time 30 "${API_URL}/repos/${OCR_REPO}/releases/latest" | jq -r '.tag_name // empty')"
   if [ -z "$tag" ]; then
     echo "::error::could not resolve the latest OCR release via ${API_URL}"
@@ -43,6 +45,16 @@ if [ "$OCR_VERSION" = "latest" ]; then
 else
   version="${OCR_VERSION#v}"
   tag="v${version}"
+  # Advisory support-window check: only the 3 newest releases are
+  # officially supported. A failed lookup skips the check rather than
+  # failing the install — support status never gates anything.
+  supported="$(curl -fsSL --connect-timeout 10 --max-time 30 "${API_URL}/repos/${OCR_REPO}/releases?per_page=3" 2>/dev/null | jq -r '.[].tag_name' 2>/dev/null || true)"
+  if [ -z "$supported" ]; then
+    echo "note: could not resolve the supported OCR release window via ${API_URL}; skipping the support check"
+  elif ! printf '%s\n' "$supported" | grep -qxF -e "$tag" -e "$version"; then
+    supported_list="$(printf '%s' "$supported" | sed 's/^v//' | tr '\n' ' ' | sed 's/ $//')"
+    echo "::warning::ocr-version ${version} is outside the officially supported window (${supported_list// /, }); it may work, but only the 3 newest OCR releases are supported"
+  fi
 fi
 
 mkdir -p "$INSTALL_DIR"
@@ -52,19 +64,16 @@ if ! curl -fsSL --connect-timeout 10 --max-time 300 "${DOWNLOAD_BASE}/${tag}/${A
   exit 1
 fi
 
-if [ "$OCR_VERSION" != "latest" ]; then
-  expected="$(awk -v v="$version" '$1 == v {print $2}' "$CHECKSUM_FILE" 2>/dev/null || true)"
-  if [ -n "$expected" ]; then
-    actual="$(compute_sha256 "${INSTALL_DIR}/ocr")"
-    if [ "$actual" != "$expected" ]; then
-      echo "::error::OCR ${version} checksum mismatch: expected ${expected}, got ${actual}"
-      exit 1
-    fi
-    echo "Checksum verified for OCR ${version}"
-  else
-    echo "::error::no checksum recorded for OCR ${version} in ${CHECKSUM_FILE}; refusing to install a pinned version unverified"
+expected="$(awk -v v="$version" '$1 == v {print $2}' "$CHECKSUM_FILE" 2>/dev/null || true)"
+if [ -n "$expected" ]; then
+  actual="$(compute_sha256 "${INSTALL_DIR}/ocr")"
+  if [ "$actual" != "$expected" ]; then
+    echo "::error::OCR ${version} checksum mismatch: expected ${expected}, got ${actual}"
     exit 1
   fi
+  echo "Checksum verified for OCR ${version}"
+else
+  echo "::warning::no checksum recorded for OCR ${version} in ${CHECKSUM_FILE}; installing unverified — pin a release with a recorded checksum for a verified install"
 fi
 
 chmod +x "${INSTALL_DIR}/ocr"

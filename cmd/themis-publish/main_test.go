@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/coolamit/themis/internal/ocr"
@@ -96,6 +98,23 @@ func TestRunUntrustedStatus(t *testing.T) {
 	}
 	if len(f.reviewPosts) != 0 || len(f.issuePosts) != 0 {
 		t.Error("untrusted status must not publish anything")
+	}
+}
+
+// v1.8.5 reports "partial" when some selected items failed; findings
+// from the items that did complete are still publishable.
+func TestRunPublishesPartialReview(t *testing.T) {
+	f := setupEnv(t)
+	path := filepath.Join(t.TempDir(), "partial.json")
+	doc := `{"status": "partial", "comments": [{"path": "index.php", "content": "finding", "start_line": 3, "end_line": 3, "severity": "high"}]}`
+	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := run([]string{path}); got != 0 {
+		t.Errorf("exit = %d, want 0", got)
+	}
+	if len(f.reviewPosts) != 1 || len(f.reviewPosts[0]) != 1 {
+		t.Fatalf("reviewPosts = %v, want one review with one comment", f.reviewPosts)
 	}
 }
 

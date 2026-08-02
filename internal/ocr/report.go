@@ -8,12 +8,14 @@ import (
 	"strings"
 )
 
-// pinHint is appended to decode/validation errors: incompatible output
-// usually means OCR changed its schema, and pinning is the escape hatch.
-const pinHint = " (if the installed OCR release changed its output schema, pin ocr-version to the last known-good release)"
+// PinHint is appended to decode/validation errors — and by callers to
+// the untrusted-status error: incompatible output usually means OCR
+// changed its schema, and pinning is the escape hatch.
+const PinHint = " (if the installed OCR release changed its output schema, pin ocr-version to the last known-good release)"
 
 // Report is the top-level JSON document produced by
-// `ocr review --format json` (OCR v1.8.4).
+// `ocr review --format json` (OCR 1.8.x). Unknown top-level fields —
+// such as the run manifest v1.8.5 added — are deliberately ignored.
 type Report struct {
 	Status    string     `json:"status"`
 	TraceID   string     `json:"trace_id,omitempty"`
@@ -66,17 +68,17 @@ func Decode(r io.Reader) (*Report, error) {
 	var rep Report
 	dec := json.NewDecoder(r)
 	if err := dec.Decode(&rep); err != nil {
-		return nil, fmt.Errorf("parsing OCR output: %w"+pinHint, err)
+		return nil, fmt.Errorf("parsing OCR output: %w"+PinHint, err)
 	}
 	// Only clean EOF proves the document was the whole stream — a nil
 	// error means a second JSON value followed, and a syntax error means
 	// trailing junk (including "]"/"}" prefixes that json.Decoder.More
 	// would wave through).
 	if err := dec.Decode(new(json.RawMessage)); err != io.EOF {
-		return nil, fmt.Errorf("invalid OCR output: trailing data after the JSON document" + pinHint)
+		return nil, fmt.Errorf("invalid OCR output: trailing data after the JSON document" + PinHint)
 	}
 	if err := rep.validate(); err != nil {
-		return nil, fmt.Errorf("invalid OCR output: %w"+pinHint, err)
+		return nil, fmt.Errorf("invalid OCR output: %w"+PinHint, err)
 	}
 	return &rep, nil
 }
@@ -118,11 +120,19 @@ func (c Comment) HasUsableLines() bool {
 }
 
 // ReviewRan reports whether the review actually completed, i.e. the
-// comments (or their absence) are trustworthy and publishable. Any
+// comments (or their absence) are trustworthy and publishable.
+//
+// OCR 1.8.4 and earlier emit "success" / "completed_with_warnings" /
+// "completed_with_errors". From v1.8.5 the status carries the run
+// manifest's terminal state instead: "complete" (all selected items
+// reviewed) and "partial" (some items failed; findings from the rest
+// are valid — upstream documents terminal_state as the authoritative
+// replacement for the warning-derived completed_with_errors). Any
 // other status — skipped, failed, or unknown — means do not publish.
 func (r *Report) ReviewRan() bool {
 	switch r.Status {
-	case "success", "completed_with_warnings", "completed_with_errors":
+	case "success", "completed_with_warnings", "completed_with_errors",
+		"complete", "partial":
 		return true
 	}
 	return false

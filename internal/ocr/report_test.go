@@ -147,6 +147,9 @@ func TestReviewRanStatuses(t *testing.T) {
 		{"success", true},
 		{"completed_with_warnings", true},
 		{"completed_with_errors", true},
+		// v1.8.5 manifest terminal states.
+		{"complete", true},
+		{"partial", true},
 		{"skipped", false},
 		{"failed", false},
 		{"exploded", false},
@@ -159,6 +162,38 @@ func TestReviewRanStatuses(t *testing.T) {
 		if got := rep.ReviewRan(); got != tc.want {
 			t.Errorf("ReviewRan() with status %q = %v, want %v", tc.status, got, tc.want)
 		}
+	}
+}
+
+// round3.json is real OCR v1.8.5 output: status carries the run
+// manifest's terminal state and the document gains manifest/warnings
+// top-level fields the decoder must tolerate.
+func TestDecodeFileRound3(t *testing.T) {
+	rep, err := DecodeFile("testdata/round3.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Status != "complete" {
+		t.Errorf("status = %q, want complete", rep.Status)
+	}
+	if !rep.ReviewRan() {
+		t.Error("ReviewRan() = false on a v1.8.5 complete run")
+	}
+	if len(rep.Comments) != 7 {
+		t.Fatalf("len(comments) = %d, want 7", len(rep.Comments))
+	}
+	if rep.Summary == nil || rep.Summary.FilesReviewed != 3 || rep.Summary.TotalTokens != 151719 || rep.Summary.Elapsed != "40s" {
+		t.Errorf("summary = %+v, want files_reviewed 3, total_tokens 151719, elapsed 40s", rep.Summary)
+	}
+	c := rep.Comments[3]
+	if c.Path != "index.php" || c.StartLine != 22 || c.EndLine != 22 || c.Category != "bug" || c.Severity != "high" {
+		t.Errorf("comment 3 = %+v, want index.php L22 bug/high", c)
+	}
+	if c.ExistingCode != "$isFruitValid = in_array($fruits, $fruit, true);" {
+		t.Errorf("comment 3 existing_code = %q", c.ExistingCode)
+	}
+	if rep.SessionID != "f8aed529-c0e1-400a-9bd0-59412eb12011" {
+		t.Errorf("session_id = %q", rep.SessionID)
 	}
 }
 

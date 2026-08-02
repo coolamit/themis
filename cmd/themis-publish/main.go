@@ -41,7 +41,7 @@ func run(args []string) int {
 		return fail("%v", err)
 	}
 	if !rep.ReviewRan() {
-		return fail("review did not complete (status %q); not publishing", rep.Status)
+		return fail("review did not complete (status %q); not publishing%s", rep.Status, ocr.PinHint)
 	}
 
 	ev, err := event.Load(os.Getenv("GITHUB_EVENT_PATH"))
