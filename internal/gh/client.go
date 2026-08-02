@@ -48,6 +48,10 @@ func (e *APIError) Error() string {
 func (c *Client) do(method, url string, body, out any) (next string, err error) {
 	if strings.HasPrefix(url, "/") {
 		url = c.BaseURL + url
+	} else if !strings.HasPrefix(url, c.BaseURL+"/") {
+		// Absolute URLs come from Link headers; the token is never
+		// sent anywhere but the configured API origin.
+		return "", fmt.Errorf("refusing to follow %s: outside the API origin %s", url, c.BaseURL)
 	}
 	var reqBody io.Reader
 	if body != nil {

@@ -80,7 +80,8 @@ func Parse(r io.Reader) (*Event, error) {
 	}
 
 	// A nil head repo means the fork was deleted; treat it as a fork.
-	isFork := p.PullRequest.Head.Repo == nil || p.PullRequest.Head.Repo.FullName != baseFull
+	// Full names are compared case-insensitively, as GitHub treats them.
+	isFork := p.PullRequest.Head.Repo == nil || !strings.EqualFold(p.PullRequest.Head.Repo.FullName, baseFull)
 
 	return &Event{
 		Action:    p.Action,

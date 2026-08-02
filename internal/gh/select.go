@@ -48,6 +48,11 @@ func Select(findings []ocr.Comment, maxComments, maxCritical int) Selection {
 		}
 	}
 
+	// Negative budgets would corrupt the slice bounds below; direct
+	// library callers bypass the CLI's env validation.
+	maxComments = max(maxComments, 0)
+	maxCritical = max(maxCritical, 0)
+
 	criticalsInline := min(len(criticals), maxCritical)
 	inlineBudget := max(maxComments, criticalsInline)
 	restInline := min(inlineBudget-criticalsInline, len(rest))

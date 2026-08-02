@@ -219,15 +219,16 @@ Themis reviews the full diff on every push, but it won't repost findings it has 
 ## Versioning & referencing Themis
 
 - **`@latest`** — a moving tag updated on every release; set-and-forget. Caveat: it follows breaking releases too.
-- **`@v0.1.0`** (exact tag) or a **commit SHA** — for stability; nothing changes until you change it. Dependabot's `github-actions` ecosystem can propose reviewed updates for pinned refs.
+- **`@v0.1.0`** (exact tag) — for stability; the action code and its `themis-publish` binary are both fixed, and the binary is checksum-verified against that release. Dependabot's `github-actions` ecosystem can propose reviewed updates for pinned refs.
+- A **commit SHA** pins the action code itself with the strongest guarantee, with one caveat: only version tags map to a specific binary release, so a SHA-pinned Themis still downloads the **latest** `themis-publish` binary, unverified. For a fully pinned setup, prefer an exact version tag (or the SHA a version tag points at, which resolves the same way).
 - **`@master`** — discouraged. It tracks unreleased commits whose `themis-publish` binaries may not exist yet, so runs can fail at the install step.
 
 ## Supply chain
 
 - **Zero external Go dependencies** — `themis-publish` is built from the standard library alone; `go.sum` is empty and stays that way.
 - Releases ship the static linux/amd64 binary plus a SHA-256 checksums file, built by CI from a commit verified to be on `master`.
-- Pinning `ocr-version` enables checksum verification of the OCR binary against hashes recorded in this repo (`scripts/ocr-checksums.txt`); `latest` necessarily installs unverified. Pin for production.
-- Pin Themis itself by commit SHA for the strongest guarantee.
+- Pinning `ocr-version` requires a hash recorded in this repo (`scripts/ocr-checksums.txt`) and fails closed without one — a pinned install is always a verified install. `latest` necessarily installs unverified and says so with a workflow warning. Pin for production.
+- When Themis is referenced by a version tag, the `themis-publish` binary is checksum-verified against that release's `checksums.txt`; branch and SHA refs fetch the latest release binary unverified (see Versioning above).
 
 ## Exit codes
 

@@ -86,6 +86,17 @@ func TestParseRejectsIncompletePayloads(t *testing.T) {
 	}
 }
 
+func TestParseSameRepoCaseInsensitive(t *testing.T) {
+	payload := `{"number": 5, "pull_request": {"number": 5, "base": {"ref": "main", "repo": {"full_name": "o/r"}}, "head": {"sha": "abc1234", "repo": {"full_name": "O/R"}}}, "repository": {"full_name": "o/r"}}`
+	ev, err := Parse(strings.NewReader(payload))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if ev.IsFork {
+		t.Error("IsFork = true for a same-repo head differing only in case")
+	}
+}
+
 func TestParseFallsBackToTopLevelNumber(t *testing.T) {
 	payload := `{"number": 42, "pull_request": {"base": {"ref": "main", "repo": {"full_name": "o/r"}}, "head": {"sha": "abc", "repo": {"full_name": "o/r"}}}, "repository": {"full_name": "o/r"}}`
 	ev, err := Parse(strings.NewReader(payload))

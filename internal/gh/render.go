@@ -52,11 +52,11 @@ func header(c ocr.Comment) string {
 // RenderComment builds the body of an inline review comment. The
 // suggestion block is included only when both suggestion_code and
 // existing_code are present AND existing_code still matches the head
-// file content at start_line..end_line (whitespace-normalized) —
-// GitHub applies a suggestion by replacing exactly the commented
-// lines, so a stale mismatch would apply a wrong patch. On mismatch
-// (or any lookup failure) the comment is kept and only the suggestion
-// is dropped.
+// file content at start_line..end_line (compared line by line,
+// ignoring only trailing whitespace) — GitHub applies a suggestion by
+// replacing exactly the commented lines, so a stale mismatch would
+// apply a wrong patch. On mismatch (or any lookup failure) the comment
+// is kept and only the suggestion is dropped.
 func RenderComment(c ocr.Comment, lookup FileContentFunc) string {
 	parts := []string{header(c), c.Content}
 	if suggestionApplies(c, lookup) {
@@ -75,11 +75,29 @@ func suggestionApplies(c ocr.Comment, lookup FileContentFunc) bool {
 		return false
 	}
 	lines := strings.Split(content, "\n")
-	if c.StartLine < 1 || c.EndLine > len(lines) {
+	if c.StartLine < 1 || c.EndLine < c.StartLine || c.EndLine > len(lines) {
 		return false
 	}
 	flagged := strings.Join(lines[c.StartLine-1:c.EndLine], "\n")
-	return ocr.NormalizeWS(flagged) == ocr.NormalizeWS(c.ExistingCode)
+	return linesMatchTrimmed(flagged, c.ExistingCode)
+}
+
+// linesMatchTrimmed compares two snippets line by line, ignoring only
+// trailing whitespace (and the CR of CRLF files) on each line.
+// Indentation stays significant: leading whitespace can be semantic
+// (Python blocks, YAML nesting), so a suggestion must not apply when
+// the flagged code drifted in indentation.
+func linesMatchTrimmed(a, b string) bool {
+	al, bl := strings.Split(a, "\n"), strings.Split(b, "\n")
+	if len(al) != len(bl) {
+		return false
+	}
+	for i := range al {
+		if strings.TrimRight(al[i], " \t\r") != strings.TrimRight(bl[i], " \t\r") {
+			return false
+		}
+	}
+	return true
 }
 
 // DiffAnchor returns the fragment GitHub uses to link to a line of a

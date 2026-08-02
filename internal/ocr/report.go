@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 // pinHint is appended to decode/validation errors: incompatible output
@@ -59,10 +60,16 @@ type Comment struct {
 
 // Decode parses and validates an OCR JSON report. A nil comments array
 // is accepted (upstream encodes a nil slice on one path) and left nil.
+// Anything after the document besides whitespace is rejected — a report
+// with logs or a second JSON value appended is not trustworthy.
 func Decode(r io.Reader) (*Report, error) {
 	var rep Report
-	if err := json.NewDecoder(r).Decode(&rep); err != nil {
+	dec := json.NewDecoder(r)
+	if err := dec.Decode(&rep); err != nil {
 		return nil, fmt.Errorf("parsing OCR output: %w"+pinHint, err)
+	}
+	if dec.More() {
+		return nil, fmt.Errorf("invalid OCR output: trailing data after the JSON document" + pinHint)
 	}
 	if err := rep.validate(); err != nil {
 		return nil, fmt.Errorf("invalid OCR output: %w"+pinHint, err)
@@ -87,6 +94,9 @@ func (r *Report) validate() error {
 	for i, c := range r.Comments {
 		if c.Path == "" {
 			return fmt.Errorf("comment %d: empty path", i)
+		}
+		if strings.TrimSpace(c.Content) == "" {
+			return fmt.Errorf("comment %d (%s): empty content", i, c.Path)
 		}
 		if c.StartLine <= 0 {
 			return fmt.Errorf("comment %d (%s): start_line %d is not positive", i, c.Path, c.StartLine)

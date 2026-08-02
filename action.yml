@@ -170,11 +170,34 @@ runs:
         dir="${RUNNER_TEMP}/themis-tools"
         mkdir -p "$dir"
         case "$ACTION_REF" in
-          v[0-9]*) url="https://github.com/coolamit/themis/releases/download/${ACTION_REF}/themis-publish-linux-amd64" ;;
-          *) url="https://github.com/coolamit/themis/releases/latest/download/themis-publish-linux-amd64" ;;
+          v[0-9]*)
+            # A version tag maps to one release; verify the binary
+            # against the checksums file that release ships.
+            base="https://github.com/coolamit/themis/releases/download/${ACTION_REF}"
+            echo "Installing themis-publish from ${base}"
+            curl -fsSL --connect-timeout 10 --max-time 120 "${base}/themis-publish-linux-amd64" -o "$dir/themis-publish"
+            curl -fsSL --connect-timeout 10 --max-time 30 "${base}/checksums.txt" -o "$dir/checksums.txt"
+            expected="$(awk '$2 == "themis-publish-linux-amd64" {print $1}' "$dir/checksums.txt")"
+            if [ -z "$expected" ]; then
+              echo "::error::release ${ACTION_REF} records no checksum for themis-publish-linux-amd64"
+              exit 1
+            fi
+            actual="$(sha256sum "$dir/themis-publish" | awk '{print $1}')"
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::themis-publish checksum mismatch for ${ACTION_REF}: expected ${expected}, got ${actual}"
+              exit 1
+            fi
+            echo "Checksum verified for themis-publish ${ACTION_REF}"
+            ;;
+          *)
+            # Branch and SHA refs have no release of their own; the
+            # latest binary is mutable, so there is nothing trustworthy
+            # to verify against ahead of time.
+            url="https://github.com/coolamit/themis/releases/latest/download/themis-publish-linux-amd64"
+            echo "Installing themis-publish from ${url} (latest release, unverified)"
+            curl -fsSL --connect-timeout 10 --max-time 120 "$url" -o "$dir/themis-publish"
+            ;;
         esac
-        echo "Installing themis-publish from ${url}"
-        curl -fsSL "$url" -o "$dir/themis-publish"
         chmod +x "$dir/themis-publish"
         echo "$dir" >> "$GITHUB_PATH"
 

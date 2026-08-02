@@ -7,8 +7,10 @@
 #   INSTALL_DIR    where to place the binary; default $RUNNER_TEMP/themis-tools
 #   CHECKSUM_FILE  recorded checksums; default ocr-checksums.txt next to this script
 #
-# A pinned version with a recorded checksum is verified; "latest" cannot
-# be (there is nothing trustworthy to compare against ahead of time).
+# A pinned version must have a recorded checksum and is always
+# verified — no recorded hash means no install. "latest" cannot be
+# verified (there is nothing trustworthy to compare against ahead of
+# time) and installs with a warning.
 set -euo pipefail
 
 OCR_VERSION="${OCR_VERSION:-latest}"
@@ -28,7 +30,8 @@ compute_sha256() {
 }
 
 if [ "$OCR_VERSION" = "latest" ]; then
-  tag="$(curl -fsSL "${API_URL}/repos/${OCR_REPO}/releases/latest" | jq -r '.tag_name // empty')"
+  echo "::warning::installing the latest OCR release without checksum verification; pin ocr-version for a verified install"
+  tag="$(curl -fsSL --connect-timeout 10 --max-time 30 "${API_URL}/repos/${OCR_REPO}/releases/latest" | jq -r '.tag_name // empty')"
   if [ -z "$tag" ]; then
     echo "::error::could not resolve the latest OCR release via ${API_URL}"
     exit 1
@@ -41,7 +44,7 @@ fi
 
 mkdir -p "$INSTALL_DIR"
 echo "Installing OCR ${version} (${ASSET})"
-if ! curl -fsSL "${DOWNLOAD_BASE}/${tag}/${ASSET}" -o "${INSTALL_DIR}/ocr"; then
+if ! curl -fsSL --connect-timeout 10 --max-time 300 "${DOWNLOAD_BASE}/${tag}/${ASSET}" -o "${INSTALL_DIR}/ocr"; then
   echo "::error::failed to download OCR ${version} from ${DOWNLOAD_BASE}/${tag}/${ASSET}"
   exit 1
 fi
@@ -56,7 +59,8 @@ if [ "$OCR_VERSION" != "latest" ]; then
     fi
     echo "Checksum verified for OCR ${version}"
   else
-    echo "::warning::no checksum recorded for OCR ${version}; installing unverified"
+    echo "::error::no checksum recorded for OCR ${version} in ${CHECKSUM_FILE}; refusing to install a pinned version unverified"
+    exit 1
   fi
 fi
 

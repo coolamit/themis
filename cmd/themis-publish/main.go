@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 
 	"github.com/coolamit/themis/internal/event"
@@ -18,6 +19,10 @@ import (
 )
 
 var severityLevels = map[string]int{"low": 1, "medium": 2, "high": 3, "critical": 4}
+
+// shaRe matches an abbreviated or full hex commit hash — the head SHA
+// is handed to git on a command line, so nothing else may pass.
+var shaRe = regexp.MustCompile(`^[0-9a-fA-F]{7,64}$`)
 
 func main() {
 	os.Exit(run(os.Args[1:]))
@@ -62,6 +67,9 @@ func run(args []string) int {
 	headSHA := os.Getenv("THEMIS_HEAD_SHA")
 	if headSHA == "" {
 		headSHA = ev.HeadSHA
+	}
+	if headSHA != "" && !shaRe.MatchString(headSHA) {
+		return fail("invalid head SHA %q", headSHA)
 	}
 	apiURL := envOr("GITHUB_API_URL", "https://api.github.com")
 	serverURL := envOr("GITHUB_SERVER_URL", "https://github.com")

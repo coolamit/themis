@@ -40,12 +40,35 @@ func TestRenderCommentWithSuggestion(t *testing.T) {
 	}
 }
 
-func TestRenderCommentSuggestionSurvivesWhitespaceChurn(t *testing.T) {
+func TestRenderCommentSuggestionSurvivesTrailingWhitespace(t *testing.T) {
 	c := guardComment
-	c.ExistingCode = "  $code   = $_GET['code'];\t"
+	c.ExistingCode = "$code = $_GET['code'];  \t"
 	body := RenderComment(c, lookupHead)
 	if !strings.Contains(body, "```suggestion") {
-		t.Error("whitespace-only difference dropped the suggestion block")
+		t.Error("trailing-whitespace difference dropped the suggestion block")
+	}
+}
+
+func TestRenderCommentSuggestionSurvivesCRLF(t *testing.T) {
+	crlf := strings.ReplaceAll(headFile, "\n", "\r\n")
+	body := RenderComment(guardComment, func(string) (string, error) { return crlf, nil })
+	if !strings.Contains(body, "```suggestion") {
+		t.Error("CRLF line endings in the head file dropped the suggestion block")
+	}
+}
+
+func TestRenderCommentSuggestionDroppedOnIndentationDrift(t *testing.T) {
+	// Leading whitespace can be semantic (Python blocks, YAML nesting);
+	// an indentation-only difference must drop the suggestion.
+	c := guardComment
+	c.ExistingCode = "  $code = $_GET['code'];"
+	if strings.Contains(RenderComment(c, lookupHead), "```suggestion") {
+		t.Error("indentation drift kept the suggestion block")
+	}
+
+	c.ExistingCode = "$code   =   $_GET['code'];"
+	if strings.Contains(RenderComment(c, lookupHead), "```suggestion") {
+		t.Error("internal-spacing drift kept the suggestion block")
 	}
 }
 
@@ -91,6 +114,13 @@ func TestRenderCommentSuggestionGuardEdgeCases(t *testing.T) {
 	outOfRange.EndLine = 500
 	if strings.Contains(RenderComment(outOfRange, lookupHead), "```suggestion") {
 		t.Error("suggestion block rendered for lines beyond EOF")
+	}
+
+	reversed := guardComment
+	reversed.StartLine = 5
+	reversed.EndLine = 2
+	if strings.Contains(RenderComment(reversed, lookupHead), "```suggestion") {
+		t.Error("suggestion block rendered for a reversed line range")
 	}
 }
 

@@ -129,3 +129,10 @@ func TestSelectEmpty(t *testing.T) {
 		t.Errorf("empty input produced inline=%d overflow=%d", len(sel.Inline), len(sel.Overflow))
 	}
 }
+
+func TestSelectClampsNegativeBudgets(t *testing.T) {
+	sel := Select(makeFindings(map[string]int{"critical": 2, "high": 3}), -5, -1)
+	if len(sel.Inline) != 0 || len(sel.Overflow) != 5 {
+		t.Errorf("negative budgets: inline=%d overflow=%d, want 0/5", len(sel.Inline), len(sel.Overflow))
+	}
+}

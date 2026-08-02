@@ -185,6 +185,17 @@ func TestRunInvalidConfig(t *testing.T) {
 	}
 }
 
+func TestRunRejectsMalformedHeadSHA(t *testing.T) {
+	f := setupEnv(t)
+	t.Setenv("THEMIS_HEAD_SHA", "--upload-pack=evil")
+	if got := run([]string{fixtures + "round1.json"}); got != 1 {
+		t.Errorf("exit = %d, want 1 for a non-hex head SHA", got)
+	}
+	if len(f.reviewPosts) != 0 {
+		t.Error("published despite a malformed head SHA")
+	}
+}
+
 func TestRunLabeledForkEvent(t *testing.T) {
 	// The publisher itself is event-shape agnostic; verify a
 	// pull_request_target labeled payload parses and publishes too.

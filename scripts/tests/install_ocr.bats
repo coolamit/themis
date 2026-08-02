@@ -34,23 +34,24 @@ setup() {
   [[ "$output" == *"checksum mismatch"* ]]
 }
 
-@test "install-ocr warns but proceeds for a pinned version with no recorded checksum" {
+@test "install-ocr fails closed for a pinned version with no recorded checksum" {
   echo "1.0.0 $ASSET_SHA" > "$BATS_TEST_TMPDIR/checksums"
   export CHECKSUM_FILE="$BATS_TEST_TMPDIR/checksums"
   stub_curl
   OCR_VERSION=1.8.4 run "$SCRIPTS_DIR/install-ocr.sh"
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 1 ]
   [[ "$output" == *"no checksum recorded"* ]]
-  [ -x "$INSTALL_DIR/ocr" ]
+  [ ! -x "$INSTALL_DIR/ocr" ]
 }
 
-@test "install-ocr resolves latest via the releases API without verification" {
+@test "install-ocr resolves latest via the releases API with a warning" {
   # The stub serves the same body for both the API call and the download;
   # a JSON body containing tag_name works for both purposes.
   printf '{"tag_name":"v9.9.9"}' > "$BATS_TEST_TMPDIR/asset"
   stub_curl
   OCR_VERSION=latest run "$SCRIPTS_DIR/install-ocr.sh"
   [ "$status" -eq 0 ]
+  [[ "$output" == *"::warning::"* ]]
   grep -q "releases/latest" "$CURL_STUB_URL_LOG"
   grep -q "releases/download/v9.9.9/opencodereview-linux-amd64" "$CURL_STUB_URL_LOG"
   [ -x "$INSTALL_DIR/ocr" ]
