@@ -4,9 +4,11 @@
 #      are a silent no-op.
 #   2. The labeler must have write access. Users with triage permission
 #      can apply labels, so the label alone is never trusted; the
-#      permission API is the authority. (Its legacy "permission" field
-#      reports maintain as write and triage as read, which is exactly
-#      the split we want.)
+#      permission API is the authority. Its legacy "permission" field
+#      folds maintain into write and triage into read — exactly the
+#      split we want — and the case below still accepts a literal
+#      "maintain" as belt and suspenders should the API ever return
+#      raw role names.
 #
 # Inputs (env): EVENT_LABEL, REVIEW_LABEL, SENDER, REPO, GITHUB_TOKEN
 # Outputs ($GITHUB_OUTPUT): proceed=true|false

@@ -42,9 +42,11 @@ EOF
 }
 
 compute_sha256() {
+  local digest
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
+    digest="$(sha256sum "$1")" || return
   else
-    shasum -a 256 "$1" | awk '{print $1}'
+    digest="$(shasum -a 256 "$1")" || return
   fi
+  printf '%s\n' "${digest%% *}"
 }

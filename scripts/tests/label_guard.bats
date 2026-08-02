@@ -35,6 +35,15 @@ setup() {
   grep -q '^proceed=true$' "$GITHUB_OUTPUT"
 }
 
+@test "label guard proceeds for a labeler with maintain permission" {
+  echo '{"permission":"maintain"}' > "$BATS_TEST_TMPDIR/resp"
+  export CURL_STUB_BODY="$BATS_TEST_TMPDIR/resp"
+  stub_curl
+  EVENT_LABEL="themis-review" run "$SCRIPTS_DIR/label-guard.sh"
+  [ "$status" -eq 0 ]
+  grep -q '^proceed=true$' "$GITHUB_OUTPUT"
+}
+
 @test "label guard denies a labeler with read permission" {
   echo '{"permission":"read"}' > "$BATS_TEST_TMPDIR/resp"
   export CURL_STUB_BODY="$BATS_TEST_TMPDIR/resp"

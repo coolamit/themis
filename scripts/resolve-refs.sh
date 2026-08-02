@@ -12,7 +12,10 @@ HEAD_SHA="${HEAD_SHA:?HEAD_SHA is required}"
 PR_NUMBER="${PR_NUMBER:?PR_NUMBER is required}"
 OUT="${GITHUB_OUTPUT:-/dev/null}"
 
-git fetch --no-tags origin "$BASE_REF"
+if ! git fetch --no-tags origin "$BASE_REF"; then
+  echo "::error::could not fetch base ref ${BASE_REF} from origin"
+  exit 1
+fi
 
 # Fork-safe: refs/pull/N/head lives on the base repository for every PR,
 # fork or not. Tolerate a failed fetch — the object may already be local.
