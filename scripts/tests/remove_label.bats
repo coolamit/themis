@@ -44,6 +44,14 @@ setup() {
   [ ! -s "$CURL_STUB_URL_LOG" ]
 }
 
+@test "remove-label exits 0 when cleanup inputs are missing" {
+  stub_curl
+  unset REVIEW_LABEL
+  run "$SCRIPTS_DIR/remove-label.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"continuing"* ]]
+}
+
 @test "remove-label exits 0 when jq fails" {
   stub_curl
   cat > "$BATS_TEST_TMPDIR/bin/jq" <<'EOF'

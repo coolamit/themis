@@ -7,11 +7,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
+	"time"
 
 	"github.com/coolamit/themis/internal/event"
 	"github.com/coolamit/themis/internal/gh"
@@ -138,7 +140,11 @@ func headFileLookup(sha string) gh.FileContentFunc {
 		return nil
 	}
 	return func(path string) (string, error) {
-		out, err := exec.Command("git", "show", sha+":"+path).Output()
+		// Bounded like the HTTP client: a stalled subprocess must
+		// surface as an error, not hang the job.
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, "git", "show", sha+":"+path).Output()
 		if err != nil {
 			return "", fmt.Errorf("git show %s:%s: %w", sha, path, err)
 		}

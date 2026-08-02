@@ -68,7 +68,11 @@ func Decode(r io.Reader) (*Report, error) {
 	if err := dec.Decode(&rep); err != nil {
 		return nil, fmt.Errorf("parsing OCR output: %w"+pinHint, err)
 	}
-	if dec.More() {
+	// Only clean EOF proves the document was the whole stream — a nil
+	// error means a second JSON value followed, and a syntax error means
+	// trailing junk (including "]"/"}" prefixes that json.Decoder.More
+	// would wave through).
+	if err := dec.Decode(new(json.RawMessage)); err != io.EOF {
 		return nil, fmt.Errorf("invalid OCR output: trailing data after the JSON document" + pinHint)
 	}
 	if err := rep.validate(); err != nil {

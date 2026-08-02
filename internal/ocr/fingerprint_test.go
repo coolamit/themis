@@ -76,6 +76,26 @@ func TestFingerprintChangesWithCategory(t *testing.T) {
 	}
 }
 
+func TestFingerprintSnippetlessFindingsStayDistinct(t *testing.T) {
+	a := Comment{Path: "a.go", Content: "First problem.", StartLine: 3, EndLine: 3, Category: "bug"}
+	b := Comment{Path: "a.go", Content: "Second problem.", StartLine: 20, EndLine: 25, Category: "bug"}
+	if a.Fingerprint() == b.Fingerprint() {
+		t.Error("distinct snippet-less findings on the same path+category share a fingerprint")
+	}
+
+	whitespaceOnly := a
+	whitespaceOnly.ExistingCode = " \n\t"
+	if whitespaceOnly.Fingerprint() != a.Fingerprint() {
+		t.Error("whitespace-only existing_code treated differently from empty")
+	}
+
+	same := a
+	same.Content = "Reworded description of the first problem."
+	if same.Fingerprint() != a.Fingerprint() {
+		t.Error("rewording changed a snippet-less finding's fingerprint")
+	}
+}
+
 func TestFingerprintChangesWithPath(t *testing.T) {
 	moved := baseComment
 	moved.Path = "other.php"

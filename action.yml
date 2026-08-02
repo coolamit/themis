@@ -287,11 +287,14 @@ runs:
         THEMIS_FAIL_ON_SEVERITY: ${{ inputs.fail-on-severity }}
       run: themis-publish "$RUNNER_TEMP/themis-result.json"
 
+    # Gated on the guard's case-insensitive match, and removing the
+    # event's canonical label name — a review-label input differing only
+    # in case from the real label must still be cleaned up.
     - name: Remove review label
-      if: always() && github.event.action == 'labeled' && github.event.label.name == inputs.review-label
+      if: always() && github.event.action == 'labeled' && steps.guard.outputs.label-match == 'true'
       shell: bash
       env:
-        REVIEW_LABEL: ${{ inputs.review-label }}
+        REVIEW_LABEL: ${{ github.event.label.name }}
         REPO: ${{ github.repository }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         GITHUB_TOKEN: ${{ inputs.github-token }}

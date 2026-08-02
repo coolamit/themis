@@ -49,6 +49,14 @@ func TestRenderCommentSuggestionSurvivesTrailingWhitespace(t *testing.T) {
 	}
 }
 
+func TestRenderCommentSuggestionSurvivesTrailingNewline(t *testing.T) {
+	c := guardComment
+	c.ExistingCode = "$code = $_GET['code'];\n"
+	if !strings.Contains(RenderComment(c, lookupHead), "```suggestion") {
+		t.Error("a snippet carrying its final line terminator dropped the suggestion block")
+	}
+}
+
 func TestRenderCommentSuggestionSurvivesCRLF(t *testing.T) {
 	crlf := strings.ReplaceAll(headFile, "\n", "\r\n")
 	body := RenderComment(guardComment, func(string) (string, error) { return crlf, nil })

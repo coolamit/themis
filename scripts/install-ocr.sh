@@ -4,6 +4,9 @@
 # Inputs (env):
 #   OCR_VERSION    release to install ("latest" or e.g. "1.8.4"); default latest
 #   OCR_REPO       source repository; default alibaba/open-code-review
+#   OCR_API_URL    API for the latest-release lookup; default the public
+#                  https://api.github.com — NOT GITHUB_API_URL, which on
+#                  GitHub Enterprise points at a host that has no OCR
 #   INSTALL_DIR    where to place the binary; default $RUNNER_TEMP/themis-tools
 #   CHECKSUM_FILE  recorded checksums; default ocr-checksums.txt next to this script
 #
@@ -17,7 +20,7 @@ OCR_VERSION="${OCR_VERSION:-latest}"
 OCR_REPO="${OCR_REPO:-alibaba/open-code-review}"
 INSTALL_DIR="${INSTALL_DIR:-${RUNNER_TEMP:-/tmp}/themis-tools}"
 CHECKSUM_FILE="${CHECKSUM_FILE:-$(dirname "${BASH_SOURCE[0]}")/ocr-checksums.txt}"
-API_URL="${GITHUB_API_URL:-https://api.github.com}"
+API_URL="${OCR_API_URL:-https://api.github.com}"
 DOWNLOAD_BASE="${OCR_DOWNLOAD_BASE:-https://github.com/${OCR_REPO}/releases/download}"
 ASSET="opencodereview-linux-amd64"
 

@@ -79,7 +79,9 @@ func suggestionApplies(c ocr.Comment, lookup FileContentFunc) bool {
 		return false
 	}
 	flagged := strings.Join(lines[c.StartLine-1:c.EndLine], "\n")
-	return linesMatchTrimmed(flagged, c.ExistingCode)
+	// A snippet may legitimately carry the final line's terminator; the
+	// selected range never does, so drop one before comparing.
+	return linesMatchTrimmed(flagged, strings.TrimSuffix(c.ExistingCode, "\n"))
 }
 
 // linesMatchTrimmed compares two snippets line by line, ignoring only

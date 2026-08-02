@@ -72,7 +72,13 @@ func (c *Client) do(method, url string, body, out any) (next string, err error) 
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := c.HTTP.Do(req)
+	httpClient := c.HTTP
+	if httpClient == nil {
+		// A zero-value Client should degrade to a working default, not
+		// panic mid-publish.
+		httpClient = http.DefaultClient
+	}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("%s %s: %w", method, url, err)
 	}

@@ -13,8 +13,19 @@ setup() {
 @test "label guard ignores an unrelated label" {
   EVENT_LABEL="documentation" run "$SCRIPTS_DIR/label-guard.sh"
   [ "$status" -eq 0 ]
+  grep -q '^label-match=false$' "$GITHUB_OUTPUT"
   grep -q '^proceed=false$' "$GITHUB_OUTPUT"
   [ ! -s "$GITHUB_STEP_SUMMARY" ]
+}
+
+@test "label guard matches the review label case-insensitively" {
+  echo '{"permission":"write"}' > "$BATS_TEST_TMPDIR/resp"
+  export CURL_STUB_BODY="$BATS_TEST_TMPDIR/resp"
+  stub_curl
+  EVENT_LABEL="Themis-Review" run "$SCRIPTS_DIR/label-guard.sh"
+  [ "$status" -eq 0 ]
+  grep -q '^label-match=true$' "$GITHUB_OUTPUT"
+  grep -q '^proceed=true$' "$GITHUB_OUTPUT"
 }
 
 @test "label guard proceeds for a labeler with write permission" {

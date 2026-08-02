@@ -190,6 +190,8 @@ func TestDecodeRejectsBadInput(t *testing.T) {
 		{"whitespace-only content", `{"status": "success", "comments": [{"path": "a.go", "content": "  \n ", "start_line": 1, "end_line": 1}]}`},
 		{"trailing JSON document", `{"status": "success"} {"status": "failed"}`},
 		{"trailing garbage", `{"status": "success"} review log line`},
+		{"trailing close brace", `{"status": "success"}}garbage`},
+		{"trailing close bracket", `{"status": "success"}]x`},
 	}
 	for _, tc := range cases {
 		_, err := Decode(strings.NewReader(tc.input))

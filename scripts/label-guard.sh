@@ -11,7 +11,11 @@
 #      raw role names.
 #
 # Inputs (env): EVENT_LABEL, REVIEW_LABEL, SENDER, REPO, GITHUB_TOKEN
-# Outputs ($GITHUB_OUTPUT): proceed=true|false
+# Outputs ($GITHUB_OUTPUT):
+#   label-match=true|false  the applied label is the review label
+#                           (case-insensitive — GitHub label names are
+#                           case-insensitively unique)
+#   proceed=true|false      run the review
 set -euo pipefail
 
 EVENT_LABEL="${EVENT_LABEL:-}"
@@ -23,13 +27,22 @@ API_URL="${GITHUB_API_URL:-https://api.github.com}"
 OUT="${GITHUB_OUTPUT:-/dev/null}"
 SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
 
-if [ "$EVENT_LABEL" != "$REVIEW_LABEL" ]; then
-  echo "proceed=false" >> "$OUT"
+# tr, not ${var,,}: the latter needs bash 4+ and this script also runs
+# under macOS's bash 3.2 in the local test suite.
+event_lc="$(printf '%s' "$EVENT_LABEL" | tr '[:upper:]' '[:lower:]')"
+review_lc="$(printf '%s' "$REVIEW_LABEL" | tr '[:upper:]' '[:lower:]')"
+
+if [ "$event_lc" != "$review_lc" ]; then
+  {
+    echo "label-match=false"
+    echo "proceed=false"
+  } >> "$OUT"
   exit 0
 fi
+echo "label-match=true" >> "$OUT"
 
 # Any API failure leaves permission empty and lands in the denial branch.
-permission="$(curl -fsSL \
+permission="$(curl -fsSL --connect-timeout 10 --max-time 30 \
   -H "Authorization: Bearer ${GITHUB_TOKEN}" \
   -H "Accept: application/vnd.github+json" \
   "${API_URL}/repos/${REPO}/collaborators/${SENDER}/permission" \
