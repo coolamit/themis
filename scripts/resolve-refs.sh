@@ -12,14 +12,24 @@ HEAD_SHA="${HEAD_SHA:?HEAD_SHA is required}"
 PR_NUMBER="${PR_NUMBER:?PR_NUMBER is required}"
 OUT="${GITHUB_OUTPUT:-/dev/null}"
 
-if ! git fetch --no-tags origin "$BASE_REF"; then
+# Bound network fetches where coreutils timeout exists (GitHub runners);
+# fall back to unbounded on systems without it (local macOS dev).
+fetch_bounded() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 300 git fetch --no-tags origin "$1"
+  else
+    git fetch --no-tags origin "$1"
+  fi
+}
+
+if ! fetch_bounded "$BASE_REF"; then
   echo "::error::could not fetch base ref ${BASE_REF} from origin"
   exit 1
 fi
 
 # Fork-safe: refs/pull/N/head lives on the base repository for every PR,
 # fork or not. Tolerate a failed fetch — the object may already be local.
-if ! git fetch --no-tags origin "pull/${PR_NUMBER}/head"; then
+if ! fetch_bounded "pull/${PR_NUMBER}/head"; then
   echo "note: could not fetch pull/${PR_NUMBER}/head; checking for existing objects"
 fi
 

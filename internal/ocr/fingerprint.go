@@ -9,8 +9,9 @@ import (
 
 // NormalizeWS collapses every whitespace run to a single space and
 // trims leading/trailing whitespace, so indentation and wrapping churn
-// do not change a finding's identity. The suggestion guard uses the
-// same normalization when comparing flagged code against file content.
+// do not change a finding's identity. It is used only for fingerprint
+// identity; the suggestion guard deliberately uses a stricter per-line
+// comparison (see linesMatchTrimmed in the gh package).
 func NormalizeWS(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
