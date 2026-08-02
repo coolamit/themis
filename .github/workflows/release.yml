@@ -5,11 +5,19 @@ on:
     tags: ['v*']
 
 permissions:
-  contents: write
+  contents: read
+
+# Serialize releases so a slower run for an older tag can never move
+# the latest tag backward past a newer release. Never cancel a release
+# mid-flight.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
-  release:
+  validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,7 +53,7 @@ jobs:
         run: go test ./...
 
       - name: Shellcheck
-        run: shellcheck scripts/*.sh scripts/tests/check-action-consistency.sh
+        run: find scripts -name '*.sh' -print0 | xargs -0 shellcheck
 
       - name: Install bats
         run: sudo apt-get update && sudo apt-get install -y bats
@@ -55,6 +63,21 @@ jobs:
 
       - name: Action consistency
         run: ./scripts/tests/check-action-consistency.sh action.yml
+
+  # Publishing is the only job that gets a write-scoped token, and it
+  # starts only after validation succeeds on a read-only one.
+  publish:
+    runs-on: ubuntu-latest
+    needs: validate
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
 
       - name: Build release binary
         run: |

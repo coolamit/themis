@@ -7,9 +7,15 @@ on:
 permissions:
   contents: read
 
+# A new push to the PR supersedes any run still in progress.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -36,7 +42,7 @@ jobs:
         run: CGO_ENABLED=0 go build ./...
 
       - name: Shellcheck
-        run: shellcheck scripts/*.sh scripts/tests/check-action-consistency.sh
+        run: find scripts -name '*.sh' -print0 | xargs -0 shellcheck
 
       - name: Install bats
         run: sudo apt-get update && sudo apt-get install -y bats
