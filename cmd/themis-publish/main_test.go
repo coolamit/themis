@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/coolamit/themis/internal/ocr"
@@ -91,13 +92,35 @@ func TestRunMissingResultFile(t *testing.T) {
 
 func TestRunUntrustedStatus(t *testing.T) {
 	f := setupEnv(t)
-	for _, fixture := range []string{"status_failed.json", "status_skipped.json", "status_unknown.json"} {
+	for _, fixture := range []string{"status_failed.json", "status_unknown.json"} {
 		if got := run([]string{fixtures + fixture}); got != 1 {
 			t.Errorf("%s: exit = %d, want 1", fixture, got)
 		}
 	}
 	if len(f.reviewPosts) != 0 || len(f.issuePosts) != 0 {
 		t.Error("untrusted status must not publish anything")
+	}
+}
+
+// OCR "skipped" means nothing reviewable changed (e.g. a docs-only PR).
+// Themis facilitates review rather than guaranteeing one, so that is a
+// clean green outcome with a summary notice — not a failure.
+func TestRunSkippedReview(t *testing.T) {
+	f := setupEnv(t)
+	summary := filepath.Join(t.TempDir(), "summary")
+	t.Setenv("GITHUB_STEP_SUMMARY", summary)
+	if got := run([]string{fixtures + "status_skipped.json"}); got != 0 {
+		t.Errorf("exit = %d, want 0", got)
+	}
+	if len(f.reviewPosts) != 0 || len(f.issuePosts) != 0 {
+		t.Error("skipped review must not publish anything")
+	}
+	b, err := os.ReadFile(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "review skipped") {
+		t.Errorf("summary = %q, want a skip notice", b)
 	}
 }
 

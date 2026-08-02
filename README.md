@@ -256,7 +256,7 @@ Themis reviews the full PR range (merge-base to head) on every push — delibera
 
 | Code | Meaning |
 |---|---|
-| 0 | Review published (with or without findings), or clean intentional skip (e.g. fork PR without secrets). |
+| 0 | Review published (with or without findings), or clean skip: fork PR without secrets, every changed file ignored by `.themisignore`, or nothing reviewable changed (e.g. a docs-only PR — OCR reviews code and config files, not `.md`/`.txt`; the run ends green with a job-summary notice). |
 | 1 | Operational failure: bad configuration, LLM connectivity failure, OCR failed, or publish API failure. |
 | 2 | Severity gate tripped — everything else succeeded. |
 

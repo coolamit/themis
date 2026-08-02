@@ -40,6 +40,11 @@ func run(args []string) int {
 	if err != nil {
 		return fail("%v", err)
 	}
+	if rep.Skipped() {
+		fmt.Println("review skipped by OCR: nothing reviewable changed; not publishing")
+		appendStepSummary("Themis: review skipped — OCR found nothing reviewable in this PR's changes.")
+		return 0
+	}
 	if !rep.ReviewRan() {
 		return fail("review did not complete (status %q); not publishing%s", rep.Status, ocr.PinHint)
 	}
@@ -111,6 +116,22 @@ func run(args []string) int {
 func fail(format string, args ...any) int {
 	fmt.Fprintf(os.Stderr, "themis-publish: "+format+"\n", args...)
 	return 1
+}
+
+// appendStepSummary adds a line to the GitHub job summary when running
+// under Actions; anywhere else it is a no-op, as is a write failure —
+// the summary is a courtesy notice, never load-bearing.
+func appendStepSummary(line string) {
+	path := os.Getenv("GITHUB_STEP_SUMMARY")
+	if path == "" {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintln(f, line)
 }
 
 func envOr(name, def string) string {

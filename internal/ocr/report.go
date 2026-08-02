@@ -137,3 +137,12 @@ func (r *Report) ReviewRan() bool {
 	}
 	return false
 }
+
+// Skipped reports whether OCR skipped the review because nothing
+// reviewable changed ("No supported files changed" on 1.8.4; the
+// manifest's skipped terminal state on 1.8.5). A skip is a clean
+// outcome for the caller — Themis facilitates review rather than
+// guaranteeing one, so this is distinct from failed/unknown.
+func (r *Report) Skipped() bool {
+	return r.Status == "skipped"
+}

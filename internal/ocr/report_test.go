@@ -197,6 +197,24 @@ func TestDecodeFileRound3(t *testing.T) {
 	}
 }
 
+func TestSkipped(t *testing.T) {
+	cases := []struct {
+		status string
+		want   bool
+	}{
+		{"skipped", true},
+		{"success", false},
+		{"complete", false},
+		{"failed", false},
+	}
+	for _, tc := range cases {
+		rep := &Report{Status: tc.status}
+		if got := rep.Skipped(); got != tc.want {
+			t.Errorf("Skipped() with status %q = %v, want %v", tc.status, got, tc.want)
+		}
+	}
+}
+
 func TestUntrustedStatusFixtures(t *testing.T) {
 	for _, f := range []string{"testdata/status_failed.json", "testdata/status_skipped.json", "testdata/status_unknown.json"} {
 		rep, err := DecodeFile(f)
