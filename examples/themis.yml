@@ -1,15 +1,15 @@
 # Themis — AI code review on pull requests.
 #
-# This is the recommended setup (mode 1): same-repo PRs are reviewed
-# automatically when opened and on every push, and ANY PR — including
-# fork PRs — can be reviewed manually by applying the review label
+# This is the recommended setup (mode 1): same repo PRs are reviewed
+# automatically when opened and on every push and ANY PR — including
+# fork repo PRs — can be reviewed manually by applying the review label
 # (default: themis-review).
 #
-# The pull_request_target trigger never executes fork code: Themis
+# The `pull_request_target` trigger never executes fork repo code: Themis
 # checks out the trusted base branch and reads the PR head from git
 # objects only. See the Security section of the Themis README.
 
-name: Code review
+name: Code Review
 
 on:
   pull_request:
@@ -28,7 +28,7 @@ jobs:
       - uses: coolamit/themis@latest
         with:
           llm-url: https://openrouter.ai/api/v1
-          llm-api-key: ${{ secrets.LLM_API_KEY }}
+          llm-api-key: ${{ secrets.THEMIS_LLM_API_KEY }}
           llm-model: anthropic/claude-sonnet-5
           # Fail the check when a new finding reaches this severity
           # (off by default — see the Severity gate section of the README):
