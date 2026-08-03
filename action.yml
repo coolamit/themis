@@ -105,8 +105,8 @@ inputs:
   ocr-version:
     description: >-
       OCR release to install. 'latest' resolves via the GitHub releases
-      API; pinning a specific version (e.g. 1.8.4) enables checksum
-      verification and is recommended for production.
+      API; a specific version (e.g. 1.8.4) can be pinned. The 3 newest
+      OCR releases are supported.
     required: false
     default: 'latest'
 

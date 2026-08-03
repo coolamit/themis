@@ -40,13 +40,3 @@ EOF
   chmod +x "$BATS_TEST_TMPDIR/bin/curl"
   export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
 }
-
-compute_sha256() {
-  local digest
-  if command -v sha256sum >/dev/null 2>&1; then
-    digest="$(sha256sum "$1")" || return
-  else
-    digest="$(shasum -a 256 "$1")" || return
-  fi
-  printf '%s\n' "${digest%% *}"
-}

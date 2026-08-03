@@ -12,7 +12,7 @@ OCR ships its own official composite action (the `action.yml` at the root of `al
 
 | | Upstream action | Themis |
 |---|---|---|
-| OCR version | `latest` by default | `latest` by default; **pinnable via `ocr-version`**, checksum-verified whenever the version's hash is recorded |
+| OCR version | `latest` by default | `latest` by default; **pinnable via `ocr-version`** |
 | Runtime | Node.js + npm install every run | **Two static binaries** created in Golang, no runtime. OCR itself is created in Golang. |
 | Dedupe | Line-range overlap (positional) | **Content fingerprint** — survives line drift and LLM rewording |
 | Merge gating | No | **`fail-on-severity`** input |
@@ -183,7 +183,7 @@ on:
 | `exclude` | `''` | File patterns to exclude from review. |
 | `background` | `''` | Extra context text for the reviewer. |
 | `max-tokens-budget` | `''` | Token budget cap for the run; `budget_exceeded` surfaces in OCR's output when hit. |
-| `ocr-version` | `latest` | OCR release to install. Pin a version with a recorded checksum (e.g. `1.8.5`) for a verified install — recommended for production. The 3 newest OCR releases are supported; older ones install with an unsupported warning. |
+| `ocr-version` | `latest` | OCR release to install, `latest` or a pinned version (e.g. `1.8.5`). The 3 newest OCR releases are supported; older ones install with an unsupported warning. |
 
 ## Thinking / Reasoning effort
 
@@ -274,7 +274,6 @@ The token cost of re-reviewing is capped by `max-tokens-budget`, and the noise c
 - **Zero external Go dependencies:** `themis-publish` is built from the standard library alone; `go.sum` is empty and stays that way.
 - Releases ship the static linux/amd64 binary plus a SHA-256 checksums file, built by CI from a commit verified to be on `master` branch.
 - **OCR support policy:** the 3 newest OCR releases are officially supported; the window is resolved live from OCR's releases API at install time. Older versions still install, with a workflow warning — they may work or they may not.
-- Any install (pinned or `latest` after resolution) whose version has a hash recorded in this repo (`scripts/ocr-checksums.txt`) is checksum verified and a mismatch fails the install. Versions without a recorded hash install unverified with a workflow warning. Pin a recorded version (e.g. `1.8.5`) for production.
 - When **Themis** is referenced by a version tag, the `themis-publish` binary is checksum verified against that release's `checksums.txt`; branch and SHA refs fetch the latest release binary unverified (see Versioning above).
 
 ## Exit codes
