@@ -347,6 +347,7 @@ These are the job's outcomes (`themis-publish` itself uses the same three codes)
 - Incremental review on `synchronize` (diff from the previous head instead of the merge base). This is on the roadmap but has practical implications on quality/relevance — see [Deduplication](#deduplication-no-spam-on-every-push) for why the full range is reviewed today.
 - linux/arm64 binaries - to allow for non default Ubuntu runners.
 - Category/severity routing to the summary, upstream style.
+- Code consolidation: move the `scripts/*.sh` functionality into the Go binary as subcommands (one language, one test suite; bats tests become Go tests). `action.yml` keeps one step per phase — each step just calls its subcommand — and the binary-install step necessarily stays bash (something has to download the binary first). A maintainability cleanup, not a performance item: run time is dominated by the LLM review either way.
 
 ## License
 
