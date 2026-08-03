@@ -138,6 +138,8 @@ runs:
         SENDER: ${{ github.event.sender.login }}
         REPO: ${{ github.repository }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
+        RUN_ID: ${{ github.run_id }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       run: '"$GITHUB_ACTION_PATH/scripts/label-guard.sh"'
 
     - name: Preflight credentials

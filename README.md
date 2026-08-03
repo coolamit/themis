@@ -31,6 +31,12 @@ This project is named after the Greek goddess of fair judgement. **Themis** publ
 ```yaml
 name: Code Review
 
+# Pushes supersede the stale in-flight auto review; label runs are never
+# canceled — Themis skips them itself when a review is already running.
+concurrency:
+  group: themis-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 on:
   pull_request:
     types: [opened, synchronize]
@@ -40,10 +46,12 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  actions: read # lets Themis skip a label run when a review is already in progress
 
 jobs:
   review:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: coolamit/themis@latest
         with:
@@ -179,7 +187,7 @@ on:
 
 > **Mode 4 known limitation:** if someone labels a *fork* PR in this mode, the workflow token is read-only, so **Themis** cannot remove the label — it posts a "review skipped" notice to the job summary and the label sits there. Harmless; it's GitHub's restriction, not **Themis**'s.
 
-**Label flow:** only the configured `review-label` triggers anything (other labels are a silent no-op), and the labeler must have write, maintain, or admin permission — users with triage permission can apply labels, so the label alone is never trusted. One label application = one review; the label is removed when the run finishes, so re-apply it to re-review. Stick to ASCII label names: the case-insensitive match folds ASCII only, so a `review-label` differing from the repo's label in non-ASCII case alone will silently never trigger.
+**Label flow:** only the configured `review-label` triggers anything (other labels are a silent no-op), and the labeler must have write, maintain, or admin permission — users with triage permission can apply labels, so the label alone is never trusted. One label application = one review; the label is removed when the run finishes, so re-apply it to re-review. Applying the label while a review of the PR is **already in progress** is a no-op: the label is removed with a job-summary notice and no second review starts — nothing changed, so there's nothing new to review (this check needs `actions: read` in the workflow's permissions; without it, it is skipped and the duplicate review simply runs). Stick to ASCII label names: the case-insensitive match folds ASCII only, so a `review-label` differing from the repo's label in non-ASCII case alone will silently never trigger.
 
 **Dependabot:** under a plain `pull_request` event, Dependabot PRs receive no repository secrets (GitHub's rule, same as forks), so **Themis** skips them green with a job-summary notice instead of failing. Use the label trigger to review one on demand.
 
@@ -322,7 +330,7 @@ These are the job's outcomes (`themis-publish` itself uses the same three codes)
 
 | Code | Meaning |
 |---|---|
-| 0 | Review published (with or without findings), or clean skip: fork or Dependabot PR without secrets, every changed file ignored by `.themisignore`, nothing reviewable changed (e.g. a docs-only PR — OCR reviews code and config files, not `.md`/`.txt`), or a label event that shouldn't trigger (wrong label, or a labeler below write permission). Skips end green with a job-summary notice. |
+| 0 | Review published (with or without findings), or clean skip: fork or Dependabot PR without secrets, every changed file ignored by `.themisignore`, nothing reviewable changed (e.g. a docs-only PR — OCR reviews code and config files, not `.md`/`.txt`), or a label event that shouldn't trigger (wrong label, a labeler below write permission, or a review of the PR already in progress). Skips end green with a job-summary notice. |
 | 1 | Operational failure: bad configuration, unresolvable PR refs, a `.themisignore` guardrail violation, LLM connectivity failure (`ocr llm test`), OCR failed or returned an unrecognized status (usually schema drift in a new OCR release — pin `ocr-version`), or publish API failure. |
 | 2 | Severity gate tripped — everything else succeeded. |
 

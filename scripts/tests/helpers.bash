@@ -15,6 +15,13 @@ setup_gh_files() {
 #   CURL_STUB_BODY      file whose content is printed (or written to -o)
 #   CURL_STUB_EXIT      exit code (default 0)
 #   CURL_STUB_URL_LOG   file where each requested URL is appended
+# URL-specific overrides (each falls back to the generic vars above),
+# for scripts that hit several endpoints in one run:
+#   CURL_STUB_BODY_PERMISSION    …/collaborators/…/permission
+#   CURL_STUB_BODY_RUN           …/actions/runs/<id>
+#   CURL_STUB_BODY_QUEUED        …runs?status=queued…
+#   CURL_STUB_BODY_INPROGRESS    …runs?status=in_progress…
+#   CURL_STUB_EXIT_ACTIONS       exit code for the three actions endpoints
 stub_curl() {
   mkdir -p "$BATS_TEST_TMPDIR/bin"
   cat > "$BATS_TEST_TMPDIR/bin/curl" <<'EOF'
@@ -30,10 +37,17 @@ for a in "$@"; do
   esac
 done
 if [ -n "${CURL_STUB_URL_LOG:-}" ]; then echo "$url" >> "$CURL_STUB_URL_LOG"; fi
+body="${CURL_STUB_BODY:-}"
 exit_code="${CURL_STUB_EXIT:-0}"
+case "$url" in
+  *status=queued*)      body="${CURL_STUB_BODY_QUEUED:-$body}";     exit_code="${CURL_STUB_EXIT_ACTIONS:-$exit_code}" ;;
+  *status=in_progress*) body="${CURL_STUB_BODY_INPROGRESS:-$body}"; exit_code="${CURL_STUB_EXIT_ACTIONS:-$exit_code}" ;;
+  */actions/runs/*)     body="${CURL_STUB_BODY_RUN:-$body}";        exit_code="${CURL_STUB_EXIT_ACTIONS:-$exit_code}" ;;
+  */permission)         body="${CURL_STUB_BODY_PERMISSION:-$body}" ;;
+esac
 if [ "$exit_code" != "0" ]; then exit "$exit_code"; fi
-if [ -n "${CURL_STUB_BODY:-}" ]; then
-  if [ -n "$out" ]; then cat "${CURL_STUB_BODY}" > "$out"; else cat "${CURL_STUB_BODY}"; fi
+if [ -n "$body" ]; then
+  if [ -n "$out" ]; then cat "$body" > "$out"; else cat "$body"; fi
 fi
 exit 0
 EOF
