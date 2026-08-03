@@ -116,12 +116,20 @@ type User struct {
 }
 
 // ListedComment is one existing comment as returned by a comment-list
-// endpoint: its body and the account that wrote it. The author matters
-// because fingerprint markers are only trusted in comments Themis
-// itself posted (see Publisher.existingFingerprints).
+// endpoint: its body, the account that wrote it, and — for review
+// comments — the diff position it currently anchors to. The author
+// matters because fingerprint markers are only trusted in comments
+// Themis itself posted (see Publisher.priorComments). The position
+// fields drive repeat demotion: GitHub keeps Line at the comment's
+// place in the current diff and nulls it once the comment goes
+// outdated, so an outdated comment (Line 0) never occupies a position;
+// issue comments have no position fields at all and decode to zero.
 type ListedComment struct {
-	Body string `json:"body"`
-	User User   `json:"user"`
+	Body      string `json:"body"`
+	User      User   `json:"user"`
+	Path      string `json:"path"`
+	Line      int    `json:"line"`       // last (or only) line of the range; 0 when outdated
+	StartLine int    `json:"start_line"` // 0 for single-line comments
 }
 
 // listComments walks every page of a comment-list endpoint.

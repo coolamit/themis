@@ -32,22 +32,31 @@ type Publisher struct {
 }
 
 // Result reports what Publish did. NewFindings holds every post-dedupe
-// finding (inline and overflow alike) — the severity gate runs on it.
+// finding (inline, overflow, and demoted alike) — the severity gate
+// runs on it, so demotion never weakens the gate. Overflow counts
+// everything that landed in the summary comments; Demoted is the
+// subset relocated there as suspected repeats.
 type Result struct {
 	NewFindings []ocr.Comment
 	Inline      int
 	Overflow    int
 	Deduped     int
+	Demoted     int
 }
 
 // Publish deduplicates findings against every fingerprint Themis
 // itself already posted on the PR (markers written by anyone else are
-// ignored — see existingFingerprints), budgets the survivors, posts
-// inline comments in batches, and folds everything else into overflow
-// summary comments, chunked to stay under GitHub's body-size cap. When
-// there is nothing new it posts nothing at all.
+// ignored — see priorComments), demotes suspected repeats — new-fp
+// findings whose line range overlaps a comment Themis already has on
+// the same path (OCR rewords its own identity fields between runs, so
+// the same finding can mint a fresh fingerprint) — to the overflow
+// summary, budgets the rest, posts inline comments in batches, and
+// folds everything else into overflow summary comments, chunked to
+// stay under GitHub's body-size cap. Demotion never suppresses: a
+// demoted finding is still published and still gates. When there is
+// nothing new it posts nothing at all.
 func (p *Publisher) Publish(findings []ocr.Comment) (*Result, error) {
-	seen, err := p.existingFingerprints()
+	seen, occupied, err := p.priorComments()
 	if err != nil {
 		return nil, fmt.Errorf("listing existing comments: %w", err)
 	}
@@ -68,7 +77,20 @@ func (p *Publisher) Publish(findings []ocr.Comment) (*Result, error) {
 		return res, nil
 	}
 
-	sel := Select(fresh, p.MaxComments, p.MaxCritical)
+	// Only pre-existing comments occupy positions: two findings from
+	// this run on the same lines are distinct by construction and both
+	// post inline.
+	var clean, demoted []ocr.Comment
+	for _, c := range fresh {
+		if c.HasUsableLines() && overlapsAny(occupied[c.Path], c.StartLine, c.EndLine) {
+			demoted = append(demoted, c)
+		} else {
+			clean = append(clean, c)
+		}
+	}
+	res.Demoted = len(demoted)
+
+	sel := Select(clean, p.MaxComments, p.MaxCritical)
 	overflow := sel.Overflow
 
 	failed, err := p.postInline(sel.Inline)
@@ -78,43 +100,73 @@ func (p *Publisher) Publish(findings []ocr.Comment) (*Result, error) {
 	res.Inline = len(sel.Inline) - len(failed)
 	overflow = append(overflow, failed...)
 
-	for _, summary := range RenderOverflowSummaries(overflow, p.FilesURL) {
+	for _, summary := range RenderOverflowSummaries(overflow, demoted, p.FilesURL) {
 		if err := p.Client.CreateIssueComment(p.Owner, p.Repo, p.Number, summary); err != nil {
 			return nil, fmt.Errorf("posting overflow summary: %w", err)
 		}
 	}
-	res.Overflow = len(overflow)
+	res.Overflow = len(overflow) + len(demoted)
 	return res, nil
 }
 
-// existingFingerprints collects every themis-fp marker already present
-// on the PR — inline review comments and issue comments (where overflow
-// summaries live) alike. Only comments authored by the publishing
-// identity are honored: github-actions[bot] (what the default Actions
-// token posts as) or the token's own login when it resolves. A
-// fingerprint is computable from the PR's code alone, so trusting
-// markers from arbitrary commenters would let a PR author suppress
-// findings — and the severity gate — by pre-posting them.
-func (p *Publisher) existingFingerprints() (map[string]bool, error) {
+// priorComments collects what Themis's own existing comments on the PR
+// contribute to this run: every themis-fp marker (for dedupe) from
+// inline review comments and issue comments (where overflow summaries
+// live) alike, and the diff positions of the live inline ones (for
+// repeat demotion), as path → [start, end] ranges. Only comments
+// authored by the publishing identity are honored: github-actions[bot]
+// (what the default Actions token posts as) or the token's own login
+// when it resolves. A fingerprint is computable from the PR's code
+// alone, so trusting markers from arbitrary commenters would let a PR
+// author suppress findings — and the severity gate — by pre-posting
+// them. Positions additionally require a marker in the body: other
+// tooling also posts as github-actions[bot], and its comments must not
+// demote Themis findings. Demotion is the worst a planted position
+// could ever cause — the finding still publishes and still gates.
+func (p *Publisher) priorComments() (map[string]bool, map[string][][2]int, error) {
 	review, err := p.Client.ListReviewComments(p.Owner, p.Repo, p.Number)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	issue, err := p.Client.ListIssueComments(p.Owner, p.Repo, p.Number)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	self := p.Client.AuthenticatedLogin()
 	seen := make(map[string]bool)
+	occupied := make(map[string][][2]int)
 	for _, c := range append(review, issue...) {
 		if !trustedAuthor(c.User.Login, self) {
 			continue
 		}
-		for _, m := range fpMarkerRe.FindAllStringSubmatch(c.Body, -1) {
+		marks := fpMarkerRe.FindAllStringSubmatch(c.Body, -1)
+		for _, m := range marks {
 			seen[m[1]] = true
 		}
+		if len(marks) == 0 || c.Path == "" || c.Line <= 0 {
+			continue
+		}
+		start := c.Line
+		if c.StartLine > 0 {
+			start = c.StartLine
+		}
+		occupied[c.Path] = append(occupied[c.Path], [2]int{start, c.Line})
 	}
-	return seen, nil
+	return seen, occupied, nil
+}
+
+// overlapsAny reports whether [start, end] intersects any occupied
+// range. Exact overlap only — no proximity window: OCR anchors the
+// same finding consistently enough for overlap to catch snippet-extent
+// drift, while any wider window has been observed to swallow genuinely
+// distinct findings a few lines apart.
+func overlapsAny(ranges [][2]int, start, end int) bool {
+	for _, r := range ranges {
+		if start <= r[1] && r[0] <= end {
+			return true
+		}
+	}
+	return false
 }
 
 // trustedAuthor reports whether dedupe markers in a comment by login
