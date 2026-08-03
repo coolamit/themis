@@ -6,8 +6,8 @@ OpenAI / Anthropic / OpenRouter / Bedrock compatible - use whichever inference p
 
 This project is named after the Greek goddess of fair judgement. **Themis** publishes OCR's findings as inline PR review comments - with GitHub suggestion blocks, content-fingerprint deduplication, comment budgeting, `.themisignore` review exclusions and an optional severity based merge gate.
 
-- [Different from the default OCR action](#different-from-the-default-ocr-action)
 - [Quickstart](#quickstart)
+- [Different from the default OCR action](#different-from-the-default-ocr-action)
 - [Provider Recipes](#provider-recipes)
 - [Trigger Modes](#trigger-modes)
 - [Inputs](#inputs)
@@ -22,26 +22,6 @@ This project is named after the Greek goddess of fair judgement. **Themis** publ
 - [Exit codes](#exit-codes)
 - [Roadmap](#roadmap)
 - [License](#license)
-
-## Different from the default OCR action
-
-OCR ships its own official composite action (the `action.yml` at the root of `alibaba/open-code-review`). **Themis** is not a competitor - it exists because I did not quite agree with how it implemented things and I've made it available as OSS in case it's useful to others. If you want the setup maintained by the OCR authors themselves, use theirs. Use **Themis** if the differences below matter to you:
-
-| | Upstream action | Themis |
-|---|---|---|
-| Runtime | Node.js + `npm install` every run; posting logic in a JS helper | **Two static binaries** created in Golang, no runtime. OCR itself is created in Golang. |
-| OCR install | npm package, pinnable via a version spec | Release binary download, pinnable via `ocr-version`; the **3 newest releases** are the supported window, resolved live from OCR's releases API |
-| Dedupe on re-push | Positional line-range overlap (IoU), **off by default** | **Content fingerprint, always on** — survives line drift, LLM rewording and indentation churn |
-| Dedupe integrity | n/a (positional) | Fingerprint markers are honored **only from Themis's own posting identity**, so a PR author can't plant markers to suppress findings or bypass the gate |
-| Merge gating | No | **`fail-on-severity`** → exit 2, distinct from operational failure |
-| Comment budgeting | None — batching only (≤50 per request), plus optional severity/category routing to the summary | **`max-comments`** cap; critical findings filled first, up to `max-critical-comments` |
-| Budget overflow | n/a (no budget) | Over-budget and GitHub-rejected findings fold into a **chunked overflow summary**, fingerprinted for dedupe — nothing is ever dropped |
-| Suggestions | Posted whenever OCR emits one | Suggestion block emitted **only when the flagged code still matches the PR head** — a stale suggestion can't apply a wrong patch |
-| Manual trigger | Left to your workflow (`base_ref`/`head_sha` inputs); no permission guard | **`review-label`** trigger with a permission check on the labeler (write+), fail-closed, automatic label cleanup |
-| Credential preflight | None — a missing key surfaces as a review error | Fork/Dependabot PRs without secrets **skip green** with a notice; real misconfiguration hard-fails; **`ocr llm test`** gates before any paid review |
-| Excluding files | Not exposed by the action | **`.themisignore`** with true gitignore semantics and anti-footgun guardrails, plus an `exclude` glob input |
-| Quiet PRs | Posts/updates a summary comment every run, including "looks good" | **Posts nothing when there's nothing new**; docs-only and all-ignored PRs end green with a job-summary notice |
-| Supply chain | npm install at run time | Static binaries; `themis-publish` **checksum-verified** on `v*` tags; releases cut only from commits on `master` |
 
 ## Quickstart
 
@@ -76,6 +56,26 @@ jobs:
 That's it, no checkout step needed (**Themis** performs its own), no Node.js, no `npm`. Same repo PRs get reviewed automatically; apply the `themis-review` label to review any PR (including forks) on demand. The complete example lives at [`examples/themis.yml`](examples/themis.yml).
 
 **Themis** needs a linux/amd64 runner (both binaries are built for it; `ubuntu-latest` qualifies). linux/arm64 is on the [roadmap](#roadmap).
+
+## Different from the default OCR action
+
+OCR ships its own official composite action (the `action.yml` at the root of `alibaba/open-code-review`). **Themis** is not a competitor - it exists because I did not quite agree with how it implemented things and I've made it available as OSS in case it's useful to others. If you want the setup maintained by the OCR authors themselves, use theirs. Use **Themis** if the differences below matter to you:
+
+| | Upstream action | Themis |
+|---|---|---|
+| Runtime | Node.js + `npm install` every run; posting logic in a JS helper | **Two static binaries** created in Golang, no runtime. OCR itself is created in Golang. |
+| OCR install | npm package, pinnable via a version spec | Release binary download, pinnable via `ocr-version`; the **3 newest releases** are the supported window, resolved live from OCR's releases API |
+| Dedupe on re-push | Positional line-range overlap (IoU), **off by default** | **Content fingerprint, always on** — survives line drift, LLM rewording and indentation churn |
+| Dedupe integrity | n/a (positional) | Fingerprint markers are honored **only from Themis's own posting identity**, so a PR author can't plant markers to suppress findings or bypass the gate |
+| Merge gating | No | **`fail-on-severity`** → exit 2, distinct from operational failure |
+| Comment budgeting | None — batching only (≤50 per request), plus optional severity/category routing to the summary | **`max-comments`** cap; critical findings filled first, up to `max-critical-comments` |
+| Budget overflow | n/a (no budget) | Over-budget and GitHub-rejected findings fold into a **chunked overflow summary**, fingerprinted for dedupe — nothing is ever dropped |
+| Suggestions | Posted whenever OCR emits one | Suggestion block emitted **only when the flagged code still matches the PR head** — a stale suggestion can't apply a wrong patch |
+| Manual trigger | Left to your workflow (`base_ref`/`head_sha` inputs); no permission guard | **`review-label`** trigger with a permission check on the labeler (write+), fail-closed, automatic label cleanup |
+| Credential preflight | None — a missing key surfaces as a review error | Fork/Dependabot PRs without secrets **skip green** with a notice; real misconfiguration hard-fails; **`ocr llm test`** gates before any paid review |
+| Excluding files | Not exposed by the action | **`.themisignore`** with true gitignore semantics and anti-footgun guardrails, plus an `exclude` glob input |
+| Quiet PRs | Posts/updates a summary comment every run, including "looks good" | **Posts nothing when there's nothing new**; docs-only and all-ignored PRs end green with a job-summary notice |
+| Supply chain | npm install at run time | Static binaries; `themis-publish` **checksum-verified** on `v*` tags; releases cut only from commits on `master` |
 
 ## Provider Recipes
 
