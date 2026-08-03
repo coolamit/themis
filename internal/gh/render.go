@@ -121,6 +121,14 @@ func DiffAnchor(path string, line int) string {
 // findings dedupe across runs too. A finding without usable line info
 // is labeled by file alone and linked to the file's whole diff.
 func RenderOverflowEntry(c ocr.Comment, filesURL string) string {
+	return renderOverflowEntry(c, filesURL, "")
+}
+
+// overflowRepeatNote labels entries demoted from inline because their
+// line range overlaps a comment Themis already posted.
+const overflowRepeatNote = "*(possible repeat of an existing comment)*"
+
+func renderOverflowEntry(c ocr.Comment, filesURL, note string) string {
 	label, line := fmt.Sprintf("`%s`", c.Path), 0
 	switch {
 	case !c.HasUsableLines():
@@ -129,16 +137,20 @@ func RenderOverflowEntry(c ocr.Comment, filesURL string) string {
 	default:
 		label, line = fmt.Sprintf("`%s` L%d", c.Path, c.StartLine), c.StartLine
 	}
-	return fmt.Sprintf("- %s [**%s**](%s%s) — %s %s",
+	entry := fmt.Sprintf("- %s [**%s**](%s%s) — %s",
 		severityIcon(c.Severity), label,
 		filesURL, DiffAnchor(c.Path, line),
-		truncateContent(c.Content), fpMarker(c))
+		truncateContent(c.Content))
+	if note != "" {
+		entry += " " + note
+	}
+	return entry + " " + fpMarker(c)
 }
 
 // overflowHeading and overflowIntro open every overflow summary comment.
 const (
 	overflowHeading = "### Themis review — additional findings"
-	overflowIntro   = "These findings did not fit the inline comment budget or could not be anchored to the diff:"
+	overflowIntro   = "These findings did not fit the inline comment budget, could not be anchored to the diff, or appear to repeat an existing comment:"
 )
 
 // maxOverflowBodyBytes caps each overflow summary body, with margin
@@ -146,15 +158,24 @@ const (
 const maxOverflowBodyBytes = 60000
 
 // RenderOverflowSummaries builds the issue comments that carry findings
-// which did not fit the inline budget (or could not be anchored to the
-// diff). Entries are split at entry boundaries into as many bodies as
-// needed to stay under maxOverflowBodyBytes; each chunk repeats the
-// heading (annotated "(part n/N)" when there is more than one) and
-// carries its own entries' fingerprint markers, so dedupe keeps working
-// across chunks. Returns nil when there is nothing to report.
-func RenderOverflowSummaries(comments []ocr.Comment, filesURL string) []string {
-	if len(comments) == 0 {
+// which did not fit the inline budget, could not be anchored to the
+// diff, or were demoted as suspected repeats of existing comments
+// (repeats — rendered last, each labeled with overflowRepeatNote).
+// Entries are split at entry boundaries into as many bodies as needed
+// to stay under maxOverflowBodyBytes; each chunk repeats the heading
+// (annotated "(part n/N)" when there is more than one) and carries its
+// own entries' fingerprint markers, so dedupe keeps working across
+// chunks. Returns nil when there is nothing to report.
+func RenderOverflowSummaries(comments, repeats []ocr.Comment, filesURL string) []string {
+	if len(comments)+len(repeats) == 0 {
 		return nil
+	}
+	entries := make([]string, 0, len(comments)+len(repeats))
+	for _, c := range comments {
+		entries = append(entries, renderOverflowEntry(c, filesURL, ""))
+	}
+	for _, c := range repeats {
+		entries = append(entries, renderOverflowEntry(c, filesURL, overflowRepeatNote))
 	}
 	// Greedily pack rendered entries. The allowance reserves room for
 	// the part annotation, whose exact width is unknown until the chunk
@@ -165,8 +186,7 @@ func RenderOverflowSummaries(comments []ocr.Comment, filesURL string) []string {
 	var chunks [][]string
 	var cur []string
 	size := 0
-	for _, c := range comments {
-		entry := RenderOverflowEntry(c, filesURL)
+	for _, entry := range entries {
 		if len(cur) > 0 && size+len("\n")+len(entry) > budget {
 			chunks = append(chunks, cur)
 			cur, size = nil, 0

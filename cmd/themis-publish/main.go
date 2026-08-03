@@ -96,8 +96,8 @@ func run(args []string) int {
 	if err != nil {
 		return fail("%v", err)
 	}
-	fmt.Printf("themis-publish: %d new finding(s): %d inline, %d in overflow summary; %d duplicate(s) skipped\n",
-		len(res.NewFindings), res.Inline, res.Overflow, res.Deduped)
+	fmt.Printf("themis-publish: %d new finding(s): %d inline, %d in overflow summary (%d demoted as possible repeats); %d duplicate(s) skipped\n",
+		len(res.NewFindings), res.Inline, res.Overflow, res.Demoted, res.Deduped)
 
 	if failOn != "" {
 		threshold := severityLevels[failOn]

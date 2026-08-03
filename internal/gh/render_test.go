@@ -233,7 +233,7 @@ func TestRenderOverflowEntryWithoutUsableLines(t *testing.T) {
 }
 
 func TestRenderOverflowSummaries(t *testing.T) {
-	if got := RenderOverflowSummaries(nil, ""); got != nil {
+	if got := RenderOverflowSummaries(nil, nil, ""); got != nil {
 		t.Errorf("empty overflow should render nothing, got %q", got)
 	}
 	comments := []ocr.Comment{
@@ -241,17 +241,47 @@ func TestRenderOverflowSummaries(t *testing.T) {
 		{Path: "b.go", Content: "Two.", StartLine: 2, EndLine: 2, Severity: "low"},
 	}
 	filesURL := "https://github.com/o/r/pull/7/files"
-	out := RenderOverflowSummaries(comments, filesURL)
+	out := RenderOverflowSummaries(comments, nil, filesURL)
 	if len(out) != 1 {
 		t.Fatalf("small set rendered %d comments, want 1", len(out))
 	}
 	// A set that fits in one comment must keep the unchunked format:
 	// plain heading, entries newline-joined, no part annotation.
 	want := "### Themis review — additional findings\n\n" +
-		"These findings did not fit the inline comment budget or could not be anchored to the diff:\n\n" +
+		"These findings did not fit the inline comment budget, could not be anchored to the diff, or appear to repeat an existing comment:\n\n" +
 		RenderOverflowEntry(comments[0], filesURL) + "\n" + RenderOverflowEntry(comments[1], filesURL)
 	if out[0] != want {
 		t.Errorf("single-chunk summary = %q, want %q", out[0], want)
+	}
+}
+
+func TestRenderOverflowSummariesRepeats(t *testing.T) {
+	comments := []ocr.Comment{
+		{Path: "a.go", Content: "Budget overflow.", StartLine: 1, EndLine: 1, Severity: "high"},
+	}
+	repeats := []ocr.Comment{
+		{Path: "b.go", Content: "Suspected repeat.", StartLine: 2, EndLine: 2, Severity: "medium"},
+	}
+	filesURL := "https://github.com/o/r/pull/7/files"
+
+	out := RenderOverflowSummaries(comments, repeats, filesURL)
+	if len(out) != 1 {
+		t.Fatalf("rendered %d comments, want 1", len(out))
+	}
+	// Repeats come after regular entries, labeled, marker intact.
+	want := RenderOverflowEntry(comments[0], filesURL) + "\n" +
+		"- 🟡 [**`b.go` L2**](" + filesURL + DiffAnchor("b.go", 2) + ") — Suspected repeat. " +
+		overflowRepeatNote + " " + fpMarker(repeats[0])
+	if !strings.HasSuffix(out[0], want) {
+		t.Errorf("summary = %q, want suffix %q", out[0], want)
+	}
+	if strings.Contains(RenderOverflowEntry(comments[0], filesURL), overflowRepeatNote) {
+		t.Errorf("regular entry must not carry the repeat note")
+	}
+
+	// Repeats alone still produce a summary.
+	if got := RenderOverflowSummaries(nil, repeats, filesURL); len(got) != 1 {
+		t.Errorf("repeats-only overflow rendered %d comments, want 1", len(got))
 	}
 }
 
@@ -263,7 +293,7 @@ func TestRenderOverflowSummariesChunks(t *testing.T) {
 			StartLine: i + 1, EndLine: i + 1, Severity: "low",
 		})
 	}
-	out := RenderOverflowSummaries(comments, "https://github.com/o/r/pull/7/files")
+	out := RenderOverflowSummaries(comments, nil, "https://github.com/o/r/pull/7/files")
 	if len(out) < 2 {
 		t.Fatalf("large set rendered %d comments, want several", len(out))
 	}

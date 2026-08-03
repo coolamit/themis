@@ -383,6 +383,145 @@ func TestPublishTrustsAuthenticatedLogin(t *testing.T) {
 	}
 }
 
+// positionedComment builds an existing inline review comment anchored
+// at path lines start..line (start 0 = single-line, like the API).
+func positionedComment(login, body, path string, start, line int) ListedComment {
+	return ListedComment{Body: body, User: User{Login: login}, Path: path, StartLine: start, Line: line}
+}
+
+// A new-fp finding whose lines overlap an existing Themis comment is
+// demoted to the overflow summary — posted and gating, never inline.
+// Models the observed OCR behavior: re-runs mint fresh fingerprints
+// (category/snippet churn) for findings anchored at the same lines.
+func TestPublishDemotesOverlappingFindings(t *testing.T) {
+	prior := ocr.Comment{Path: "wf.yml", Content: "No timeout set.", Category: "other", StartLine: 25, EndLine: 26, Severity: "medium"}
+	// Same finding, re-worded by OCR: new category and snippet extent →
+	// new fingerprint, overlapping anchor.
+	demoted := ocr.Comment{Path: "wf.yml", Content: "The job has no timeout.", Category: "performance", StartLine: 26, EndLine: 26, Severity: "medium"}
+	clean := finding("other.go", "high")
+
+	f := newFakeGitHub(t)
+	f.reviewPages = [][]ListedComment{{
+		positionedComment("github-actions[bot]", "existing finding\n"+marker(prior), "wf.yml", 25, 26),
+	}}
+
+	res, err := f.publisher().Publish([]ocr.Comment{demoted, clean})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if res.Demoted != 1 || res.Inline != 1 || res.Overflow != 1 || res.Deduped != 0 {
+		t.Errorf("Demoted/Inline/Overflow/Deduped = %d/%d/%d/%d, want 1/1/1/0",
+			res.Demoted, res.Inline, res.Overflow, res.Deduped)
+	}
+	// The gate must still see the demoted finding.
+	if len(res.NewFindings) != 2 {
+		t.Errorf("NewFindings = %d, want 2 (demotion never hides from the gate)", len(res.NewFindings))
+	}
+	if len(f.reviews) != 1 || len(f.reviews[0].Comments) != 1 || f.reviews[0].Comments[0].Path != "other.go" {
+		t.Fatalf("inline posts = %+v, want only the clean finding", f.reviews)
+	}
+	if len(f.issueComments) != 1 {
+		t.Fatalf("got %d issue comments, want 1 summary", len(f.issueComments))
+	}
+	if !strings.Contains(f.issueComments[0], marker(demoted)) || !strings.Contains(f.issueComments[0], overflowRepeatNote) {
+		t.Errorf("summary lacks the demoted finding or its repeat label: %q", f.issueComments[0])
+	}
+}
+
+// Extent drift in the other direction: a multi-line finding overlapping
+// an existing single-line comment demotes too; a finding on the same
+// path with non-overlapping lines (the re-anchored case) posts inline.
+func TestPublishDemotionOverlapBounds(t *testing.T) {
+	multiline := ocr.Comment{Path: "wf.yml", Content: "Reworded.", StartLine: 25, EndLine: 26, Severity: "medium"}
+	farAway := ocr.Comment{Path: "wf.yml", Content: "Re-anchored elsewhere.", StartLine: 15, EndLine: 15, Severity: "medium"}
+
+	f := newFakeGitHub(t)
+	f.reviewPages = [][]ListedComment{{
+		positionedComment("github-actions[bot]", marker(finding("wf.yml", "low")), "wf.yml", 0, 26),
+	}}
+
+	res, err := f.publisher().Publish([]ocr.Comment{multiline, farAway})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if res.Demoted != 1 || res.Inline != 1 {
+		t.Errorf("Demoted = %d, Inline = %d, want 1/1 (overlap demotes, distance posts)", res.Demoted, res.Inline)
+	}
+	if len(f.reviews) != 1 || f.reviews[0].Comments[0].Line != 15 {
+		t.Fatalf("inline posts = %+v, want only the line-15 finding", f.reviews)
+	}
+}
+
+// Positions are honored only from trusted authors AND marker-bearing
+// bodies, and only while the comment is live: other tooling also posts
+// as github-actions[bot], arbitrary users must not steer placement,
+// and an outdated comment (line null) means the code there changed.
+func TestPublishDemotionRequiresTrustMarkerAndLivePosition(t *testing.T) {
+	someMarker := marker(finding("elsewhere.go", "low"))
+	cases := []struct {
+		name     string
+		existing ListedComment
+	}{
+		{"untrusted author", positionedComment("mallory", someMarker, "a.go", 0, 1)},
+		{"no marker", positionedComment("github-actions[bot]", "unrelated bot comment", "a.go", 0, 1)},
+		{"outdated position", positionedComment("github-actions[bot]", someMarker, "a.go", 0, 0)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeGitHub(t)
+			f.reviewPages = [][]ListedComment{{tc.existing}}
+			res, err := f.publisher().Publish([]ocr.Comment{finding("a.go", "high")})
+			if err != nil {
+				t.Fatalf("Publish: %v", err)
+			}
+			if res.Demoted != 0 || res.Inline != 1 {
+				t.Errorf("Demoted = %d, Inline = %d, want 0/1", res.Demoted, res.Inline)
+			}
+		})
+	}
+}
+
+// Two findings from the same run on overlapping lines are distinct by
+// construction — only pre-existing comments occupy positions.
+func TestPublishSameRunFindingsNeverDemoteEachOther(t *testing.T) {
+	a := ocr.Comment{Path: "a.go", Content: "First issue.", StartLine: 3, EndLine: 5, Severity: "high"}
+	b := ocr.Comment{Path: "a.go", Content: "Second, different issue.", StartLine: 4, EndLine: 4, Severity: "low"}
+	f := newFakeGitHub(t)
+	res, err := f.publisher().Publish([]ocr.Comment{a, b})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if res.Demoted != 0 || res.Inline != 2 {
+		t.Errorf("Demoted = %d, Inline = %d, want 0/2", res.Demoted, res.Inline)
+	}
+}
+
+// Demoted findings bypass Select entirely, so they never consume the
+// inline budget of findings that deserve an inline slot.
+func TestPublishDemotedFindingsDontConsumeBudget(t *testing.T) {
+	demoted := ocr.Comment{Path: "wf.yml", Content: "Reworded repeat.", StartLine: 26, EndLine: 26, Severity: "critical"}
+	clean := finding("other.go", "medium")
+
+	f := newFakeGitHub(t)
+	f.reviewPages = [][]ListedComment{{
+		positionedComment("github-actions[bot]", marker(finding("wf.yml", "low")), "wf.yml", 0, 26),
+	}}
+	p := f.publisher()
+	p.MaxComments = 1
+	p.MaxCritical = 1
+
+	res, err := p.Publish([]ocr.Comment{demoted, clean})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if res.Inline != 1 || res.Demoted != 1 {
+		t.Errorf("Inline = %d, Demoted = %d, want 1/1 (budget goes to the clean finding)", res.Inline, res.Demoted)
+	}
+	if len(f.reviews) != 1 || f.reviews[0].Comments[0].Path != "other.go" {
+		t.Fatalf("inline posts = %+v, want only the clean finding", f.reviews)
+	}
+}
+
 func TestPublishChunksOverflowSummary(t *testing.T) {
 	// 300 findings with 300-rune contents overflow entirely (zero
 	// budgets) and exceed one comment body's worth of entries.
