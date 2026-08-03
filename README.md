@@ -4,7 +4,24 @@ GitHub Action for AI powered Code Reviews via [Open Code Review (OCR)](https://g
 
 OpenAI / Anthropic / OpenRouter / Bedrock compatible - use whichever inference provider you want (as long as its supported by OCR). Bring your own model & API Key.
 
-This project is named after the Greek goddess of fair judgement. **Themis** publishes OCR's findings as inline PR review comments - with GitHub suggestion blocks, content-fingerprint deduplication, comment budgeting and an optional severity based merge gate.
+This project is named after the Greek goddess of fair judgement. **Themis** publishes OCR's findings as inline PR review comments - with GitHub suggestion blocks, content-fingerprint deduplication, comment budgeting, `.themisignore` review exclusions and an optional severity based merge gate.
+
+- [Different from the default OCR action](#different-from-the-default-ocr-action)
+- [Quickstart](#quickstart)
+- [Provider Recipes](#provider-recipes)
+- [Trigger Modes](#trigger-modes)
+- [Inputs](#inputs)
+- [Thinking / Reasoning effort](#thinking--reasoning-effort)
+- [Severity Gate](#severity-gate)
+- [Comment budgeting & overflow](#comment-budgeting--overflow)
+- [Ignoring files using `.themisignore`](#ignoring-files-using-themisignore)
+- [Deduplication: No spam on every push](#deduplication-no-spam-on-every-push)
+- [Security](#security)
+- [Versioning & referencing Themis](#versioning--referencing-themis)
+- [Supply Chain](#supply-chain)
+- [Exit codes](#exit-codes)
+- [Roadmap](#roadmap)
+- [License](#license)
 
 ## Different from the default OCR action
 
@@ -12,11 +29,19 @@ OCR ships its own official composite action (the `action.yml` at the root of `al
 
 | | Upstream action | Themis |
 |---|---|---|
-| OCR version | `latest` by default | `latest` by default; **pinnable via `ocr-version`** |
-| Runtime | Node.js + npm install every run | **Two static binaries** created in Golang, no runtime. OCR itself is created in Golang. |
-| Dedupe | Line-range overlap (positional) | **Content fingerprint** — survives line drift and LLM rewording |
-| Merge gating | No | **`fail-on-severity`** input |
-| Comment budgeting | Batch-size only | **`max-comments`** with critical-severity exemption + overflow summary |
+| Runtime | Node.js + `npm install` every run; posting logic in a JS helper | **Two static binaries** created in Golang, no runtime. OCR itself is created in Golang. |
+| OCR install | npm package, pinnable via a version spec | Release binary download, pinnable via `ocr-version`; the **3 newest releases** are the supported window, resolved live from OCR's releases API |
+| Dedupe on re-push | Positional line-range overlap (IoU), **off by default** | **Content fingerprint, always on** — survives line drift, LLM rewording and indentation churn |
+| Dedupe integrity | n/a (positional) | Fingerprint markers are honored **only from Themis's own posting identity**, so a PR author can't plant markers to suppress findings or bypass the gate |
+| Merge gating | No | **`fail-on-severity`** → exit 2, distinct from operational failure |
+| Comment budgeting | None — batching only (≤50 per request), plus optional severity/category routing to the summary | **`max-comments`** cap; critical findings filled first, up to `max-critical-comments` |
+| Budget overflow | n/a (no budget) | Over-budget and GitHub-rejected findings fold into a **chunked overflow summary**, fingerprinted for dedupe — nothing is ever dropped |
+| Suggestions | Posted whenever OCR emits one | Suggestion block emitted **only when the flagged code still matches the PR head** — a stale suggestion can't apply a wrong patch |
+| Manual trigger | Left to your workflow (`base_ref`/`head_sha` inputs); no permission guard | **`review-label`** trigger with a permission check on the labeler (write+), fail-closed, automatic label cleanup |
+| Credential preflight | None — a missing key surfaces as a review error | Fork/Dependabot PRs without secrets **skip green** with a notice; real misconfiguration hard-fails; **`ocr llm test`** gates before any paid review |
+| Excluding files | Not exposed by the action | **`.themisignore`** with true gitignore semantics and anti-footgun guardrails, plus an `exclude` glob input |
+| Quiet PRs | Posts/updates a summary comment every run, including "looks good" | **Posts nothing when there's nothing new**; docs-only and all-ignored PRs end green with a job-summary notice |
+| Supply chain | npm install at run time | Static binaries; `themis-publish` **checksum-verified** on `v*` tags; releases cut only from commits on `master` |
 
 ## Quickstart
 
@@ -49,6 +74,8 @@ jobs:
 ```
 
 That's it, no checkout step needed (**Themis** performs its own), no Node.js, no `npm`. Same repo PRs get reviewed automatically; apply the `themis-review` label to review any PR (including forks) on demand. The complete example lives at [`examples/themis.yml`](examples/themis.yml).
+
+**Themis** needs a linux/amd64 runner (both binaries are built for it; `ubuntu-latest` qualifies). linux/arm64 is on the [roadmap](#roadmap).
 
 ## Provider Recipes
 
@@ -114,6 +141,8 @@ For models the OpenAI-compatible endpoint doesn't serve, put a [LiteLLM](https:/
 | **Same-repo PRs only** | Mode 1 | Mode 4 |
 | **Including fork PRs** | Mode 2 | Mode 3 |
 
+Mode 1 actually straddles both rows: same-repo PRs are reviewed automatically **and** fork PRs can be reviewed via the label. Pick Mode 2 only if you want forks reviewed *without* anyone applying a label.
+
 **Mode 1 (recommended, what the quickstart ships)** — auto for same-repo PRs, label override for any PR. Fork label-override requires `pull_request_target` because plain `pull_request` events never receive secrets on forks:
 
 ```yaml
@@ -152,6 +181,8 @@ on:
 
 **Label flow:** only the configured `review-label` triggers anything (other labels are a silent no-op), and the labeler must have write, maintain, or admin permission — users with triage permission can apply labels, so the label alone is never trusted. One label application = one review; the label is removed when the run finishes, so re-apply it to re-review. Stick to ASCII label names: the case-insensitive match folds ASCII only, so a `review-label` differing from the repo's label in non-ASCII case alone will silently never trigger.
 
+**Dependabot:** under a plain `pull_request` event, Dependabot PRs receive no repository secrets (GitHub's rule, same as forks), so **Themis** skips them green with a job-summary notice instead of failing. Use the label trigger to review one on demand.
+
 ## Inputs
 
 ### The ones you'll actually use
@@ -166,7 +197,7 @@ on:
 | `fail-on-severity` | no | `''` (off) | `critical`, `high`, `medium`, or `low` — severity gate threshold. Empty = report-only. |
 | `max-comments` | no | `25` | Inline comment budget per run; the rest go to one overflow summary. |
 | `max-critical-comments` | no | `50` | Critical findings may exceed `max-comments`, up to this cap. |
-| `enable-thinking` | no | unset | `'true'`/`'false'` sends `{"thinking":{"type":...}}` via `llm.extra_body`; unset sends nothing. See [Thinking](#thinking--reasoning-effort). |
+| `enable-thinking` | no | `''` (unset) | `'true'`/`'false'` sends `{"thinking":{"type":...}}` via `llm.extra_body`; unset sends nothing. See [Thinking](#thinking--reasoning-effort). |
 | `review-label` | no | `themis-review` | Label name for the manual trigger mode. |
 
 ### Advanced (you probably don't need these)
@@ -180,7 +211,7 @@ on:
 | `llm-timeout` | `''` | Per-request LLM timeout in seconds. |
 | `review-concurrency` | `''` | Number of files OCR reviews in parallel. Unset uses OCR's built-in default of 8. Lower it if you hit LLM rate limits. |
 | `rule` | `''` | Repo-relative path to a custom OCR rules JSON file. |
-| `exclude` | `''` | File patterns to exclude from review. |
+| `exclude` | `''` | File patterns to exclude from review — comma-separated globs in OCR's doublestar dialect. For gitignore semantics use [`.themisignore`](#ignoring-files-using-themisignore); both compose. |
 | `background` | `''` | Extra context text for the reviewer. |
 | `max-tokens-budget` | `''` | Token budget cap for the run; `budget_exceeded` surfaces in OCR's output when hit. |
 | `ocr-version` | `latest` | OCR release to install, `latest` or a pinned version (e.g. `1.8.5`). The 3 newest OCR releases are supported; older ones install with an unsupported warning. |
@@ -211,22 +242,24 @@ llm-extra-body: '{"thinking": {"type": "enabled"}}'
 
 Set `fail-on-severity` and any **new** finding at or above the threshold fails the job with exit code 2 (distinct from operational failures, which exit 1). The red check does the reporting; branch protection does the blocking. Findings with no or unknown severity never trip the gate, and findings that were already posted on a previous push don't re-trip it.
 
+The gate evaluates every new finding, including ones that only appear in the overflow summary — going over the comment budget can't smuggle a critical past it. Reviews are always submitted as `COMMENT`, never `REQUEST_CHANGES`, so protect the branch by requiring the **Themis** check run, not by review state.
+
 > **Caveat:** severity is LLM-assigned — the gate is only as calibrated as the model; poor models give poor results. Default off is deliberate: build trust before granting veto power.
 
 Findings alone never fail the run otherwise; a red check on every PR that gets comments trains people to ignore CI.
 
 ## Comment budgeting & overflow
 
-Findings are posted as inline review comments, prefixed by severity:
+Findings are posted as inline review comments, headed by severity and category (e.g. 🔴 **critical · bug**):
 - 🔴 critical
 - 🟠 high
 - 🟡 medium
 - 🔵 low
 - ⚪ unspecified
 
-When OCR proposes a fix, the comment carries a GitHub `suggestion` block you can apply with one click but only when the flagged code still matches the PR head, so a stale suggestion can never apply a wrong patch.
+When OCR proposes a fix, the comment carries a GitHub `suggestion` block you can apply with one click but only when the flagged code still matches the PR head (compared line by line; only trailing whitespace is forgiven, indentation counts), so a stale suggestion can never apply a wrong patch. When it doesn't match, the comment is still posted — just without the suggestion.
 
-Per run, at most `max-comments` (default 25) findings go inline, filled in severity order. Critical findings are exempt from that budget: they always go inline, up to `max-critical-comments` (default 50). Everything that doesn't fit, plus any comment GitHub rejects because its line isn't in the diff, lands in **one overflow summary comment** with links into the diff. Nothing is ever dropped. If a run produces no new findings, **Themis** posts nothing at all.
+Per run, at most `max-comments` (default 25) findings go inline. Critical findings are filled first — always inline, up to `max-critical-comments` (default 50), even when that alone exceeds `max-comments`; non-critical findings then take whatever budget remains, in severity order. Everything that doesn't fit, plus any comment GitHub rejects because its line isn't in the diff, lands in an **overflow summary** with links into the diff — split into `(part n/N)` comments when it outgrows GitHub's comment-size cap. Nothing is ever dropped. If a run produces no new findings, **Themis** posts nothing at all.
 
 ## Ignoring files using `.themisignore`
 
@@ -241,10 +274,11 @@ dist/
 !dist/bundler.config.js
 ```
 
-### Details worth knowing:
+### `.themisignore` details
 
 - **The PR head's version governs.** Changes to `.themisignore` apply immediately, including in the PR that introduces or edits it. The file is read from git objects only, the PR head is never checked out.
-- **Two things fail the run loudly:** a bare `*`-style entry and any combination of entries that covers every file in the repository. Excluding everything is not a configuration **Themis** accepts.
+- **Two things fail the run loudly (exit 1):** a bare catch-all entry (`*`, `**`, `/*`, `/**`) and any combination of entries that covers every file in the repository. Excluding everything is not a configuration **Themis** accepts.
+- **Matching is case-sensitive**, regardless of the runner's filesystem. And paths containing a comma can't be excluded — OCR's exclude list is comma-separated — so such a file gets a workflow warning and is reviewed anyway.
 - **A PR touching only ignored paths skips cleanly.** When every changed file is ignored, the run ends green with a job-summary notice instead of invoking OCR — no LLM cost, no red ✗.
 - **Security note for `fail-on-severity` users:** because the head governs, a PR author can add `.themisignore` entries for specific files they also modify, taking those files out of review and out of the gate. Watch `.themisignore` changes in PRs the same way you'd watch workflow changes.
 - The `exclude` input still works and composes with `.themisignore` (both apply). Note they speak different dialects: `exclude` passes patterns straight to OCR's glob matcher, while `.themisignore` gets true gitignore semantics.
@@ -253,43 +287,51 @@ dist/
 
 **Themis** reviews the full PR range (merge-base to head) on every push deliberately, not just the latest changeset. A later push can make earlier code buggy without touching it again (a changed function contract, a removed guard), so the whole PR is re-examined in the context of its newest state; a delta only review would never look back.
 
-The token cost of re-reviewing is capped by `max-tokens-budget`, and the noise cost is eliminated by dedupe: **Themis** won't repost findings it has already made. Each comment carries an invisible fingerprint of *what the finding is about* — the file, the flagged code (whitespace normalized) and the category — rather than line numbers or the LLM's wording. So a finding stays recognized when later commits shift its line number, when the LLM rewords the same complaint or when indentation churns; it re-posts only when the flagged code itself actually changed. Comments whose code was fixed are collapsed as "outdated" by GitHub's built-in behavior.
+The token cost of re-reviewing is capped by `max-tokens-budget`, and the noise cost is eliminated by dedupe: **Themis** won't repost findings it has already made. Each comment carries an invisible fingerprint of *what the finding is about* — the file, the flagged code (whitespace normalized) and the category — rather than line numbers or the LLM's wording. So a finding stays recognized when later commits shift its line number, when the LLM rewords the same complaint or when indentation churns; it re-posts only when the flagged code itself actually changed. Comments whose code was fixed are collapsed as "outdated" by GitHub's built-in behavior. Overflow-summary entries carry fingerprints too, so they dedupe across runs exactly like inline comments.
+
+Two edge cases worth knowing:
+
+- **Fingerprints are only trusted from Themis's own posting identity** (`github-actions[bot]`, or whatever login your `github-token` resolves to). Fingerprints are computable from public PR content, so honoring anyone's would let a PR author pre-post markers to suppress findings — and with them, the severity gate. Consequence for custom tokens: if you supply a PAT or App token whose identity can't be resolved via `GET /user`, previously posted comments stop being recognized and findings repost on every push.
+- **Findings without a code snippet** fall back to a line-range identity, so those (rare) findings can repost when later commits shift their lines.
 
 ## Security
 
 - The `pull_request_target` modes never execute fork code: **Themis** checks out the **trusted base branch**, and the PR head is fetched as git objects only — never materialized into the working tree. OCR reads the diff from git objects.
 - Label triggered runs are fail closed: the labeler must have write/maintain/admin permission (triage can apply labels, so the label alone is never trusted) and any permission API failure counts as a denial.
 - Residual risk: prompt injection via diff content. A malicious diff can try to steer the reviewer; the blast radius is misleading review comments, not code execution or secret exfiltration.
-- Recommend pinning **Themis** by commit SHA (see below).
+- Recommend pinning **Themis** to an exact version tag (e.g. `@v0.1.0`) — that's the ref form whose binary is checksum verified (see [Versioning](#versioning--referencing-themis)).
 
 ## Versioning & referencing Themis
 
-- **`@latest`** — a moving tag updated on every release; set-and-forget. Caveat: it follows breaking releases too.
+- **`@latest`** — a moving tag updated on every release; set-and-forget. Caveats: it follows breaking releases too, and like every non-`v*` ref it fetches the newest `themis-publish` binary unverified — only exact version tags get a checksum-verified binary.
 - **`@v0.1.0`** (exact tag) — for stability; the action code and its `themis-publish` binary are both fixed and the binary is checksum verified against that release. Dependabot's `github-actions` ecosystem can propose reviewed updates for pinned refs.
 - A **commit SHA** pins the action code itself with the strongest guarantee, with one caveat: only version tags map to a specific binary release, so a SHA pinned **Themis** still downloads the **latest** `themis-publish` binary, unverified. For a fully pinned setup, prefer an exact version tag (or the SHA a version tag points at, which resolves the same way).
 - **`@master`** — discouraged. It tracks unreleased commits whose `themis-publish` binaries may not exist yet, so runs can fail at the install step. `themis-publish` binaries are compiled only when a release is created.
 
 ## Supply Chain
 
-- **Zero external Go dependencies:** `themis-publish` is built from the standard library alone; `go.sum` is empty and stays that way.
+- **Zero external Go dependencies:** `themis-publish` is built from the standard library alone — there isn't even a `go.sum`, and there never will be.
 - Releases ship the static linux/amd64 binary plus a SHA-256 checksums file, built by CI from a commit verified to be on `master` branch.
 - **OCR support policy:** the 3 newest OCR releases are officially supported; the window is resolved live from OCR's releases API at install time. Older versions still install, with a workflow warning — they may work or they may not.
-- When **Themis** is referenced by a version tag, the `themis-publish` binary is checksum verified against that release's `checksums.txt`; branch and SHA refs fetch the latest release binary unverified (see Versioning above).
+- The OCR binary itself installs **without checksum verification** — deliberately: **Themis** doesn't maintain hashes for another project's releases, and a hash recorded after the fact protects nothing.
+- When **Themis** is referenced by an exact `v*` version tag, the `themis-publish` binary is checksum verified against that release's `checksums.txt`; every other ref (`@latest`, branches, SHAs) fetches the latest release binary unverified (see Versioning above).
 
 ## Exit codes
 
+These are the job's outcomes (`themis-publish` itself uses the same three codes):
+
 | Code | Meaning |
 |---|---|
-| 0 | Review published (with or without findings), or clean skip: fork PR without secrets, every changed file ignored by `.themisignore`, or nothing reviewable changed (e.g. a docs-only PR — OCR reviews code and config files, not `.md`/`.txt`; the run ends green with a job-summary notice). |
-| 1 | Operational failure: bad configuration, LLM connectivity failure, OCR failed, or publish API failure. |
+| 0 | Review published (with or without findings), or clean skip: fork or Dependabot PR without secrets, every changed file ignored by `.themisignore`, nothing reviewable changed (e.g. a docs-only PR — OCR reviews code and config files, not `.md`/`.txt`), or a label event that shouldn't trigger (wrong label, or a labeler below write permission). Skips end green with a job-summary notice. |
+| 1 | Operational failure: bad configuration, unresolvable PR refs, a `.themisignore` guardrail violation, LLM connectivity failure (`ocr llm test`), OCR failed or returned an unrecognized status (usually schema drift in a new OCR release — pin `ocr-version`), or publish API failure. |
 | 2 | Severity gate tripped — everything else succeeded. |
 
-## Roadmap (v2)
+## Roadmap
 
 - Deterministic stale comment resolution: resolve threads whose flagged code no longer exists in the head (file content as the truth source, never LLM re-reporting).
 - Sticky summary comment (update in place).
 - Auto PR context: pass the PR title/description to the reviewer via `--background`.
-- Incremental review on `synchronize` (diff from the previous head instead of the merge base). This is on the roadmap but has practical implications on quality/relevance. (*See "Details worth knowing" section above*)
+- Incremental review on `synchronize` (diff from the previous head instead of the merge base). This is on the roadmap but has practical implications on quality/relevance — see [Deduplication](#deduplication-no-spam-on-every-push) for why the full range is reviewed today.
 - linux/arm64 binaries - to allow for non default Ubuntu runners.
 - Category/severity routing to the summary, upstream style.
 
